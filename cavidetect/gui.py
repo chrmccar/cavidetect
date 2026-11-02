@@ -82,7 +82,7 @@ def final_fraction(curve_csv_path: str) -> float | None:
     """Final cumulative fraction of tissue embolised = last row's
     `frac_tissue_embolised` in the `*_cs_curve.csv`. None if unreadable/empty."""
     try:
-        with open(curve_csv_path, newline="") as fh:
+        with open(curve_csv_path, newline="", encoding="utf-8") as fh:
             rows = list(csv.DictReader(fh))
     except OSError:
         return None
@@ -301,7 +301,8 @@ def main() -> None:
             cwd = None if getattr(sys, "frozen", False) else repo_root()
             self.proc = subprocess.Popen(
                 cmd, cwd=cwd, stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT, text=True, bufsize=1)
+                stderr=subprocess.STDOUT, text=True, bufsize=1,
+                encoding="utf-8", errors="replace")
             threading.Thread(target=self._reader, args=(self.proc,), daemon=True).start()
             self.root.after(100, self._drain)
 

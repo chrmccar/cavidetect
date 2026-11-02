@@ -210,7 +210,7 @@ def save_embolism_viewer(s, result, out_dir: str, stem: str,
         .replace("__CUM__", _json.dumps(cum_pct)) \
         .replace("__NFR__", str(T))
     path = os.path.join(out_dir, f"{stem}_viewer.html")
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(html)
     return path
 
@@ -306,7 +306,7 @@ def save_annotator(final_img, out_dir: str, stem: str, max_px: int = 1200) -> st
     html = (_ANNOTATOR_HTML.replace("__TITLE__", f"{stem} — raw final frame")
             .replace("__W__", str(W)).replace("__H__", str(H)).replace("__FIN__", fin_b64))
     path = os.path.join(out_dir, f"{stem}_annotate.html")
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(html)
     return path
 
@@ -391,6 +391,6 @@ setMode('add'); draw();
 
 def write_manifest(out_dir: str, stem: str, manifest: dict) -> str:
     path = os.path.join(out_dir, f"{stem}_manifest.json")
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2, default=str)
     return path

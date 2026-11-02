@@ -55,11 +55,11 @@ class Config:
     def load(cls, path: str | None):
         if not path:
             return cls()
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             d = yaml.safe_load(f) or {}
         known = {k: d[k] for k in d if k in cls.__dataclass_fields__}
         return cls(**known)
 
     def to_yaml(self, path: str):
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             yaml.safe_dump(asdict(self), f, sort_keys=False)
