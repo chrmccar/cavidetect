@@ -79,14 +79,26 @@ def onset_start_of_rise(stack, mask, rise_frac=0.4, persist=3, smooth=3):
     return onset
 
 
-def measure(stack, air=None, tail_frac=0.12, vessel_min=0.04, bright_pct=70,
-            rise_frac=0.4):
+def detect_spatial(final, air=None, vessel_min=0.04, bright_pct=65, tissue=None,
+                   ecc_min=0.9, sol_max=0.6, min_area=8):
+    """Spatial embolism detection from the dry final frame only (no timing).
+
+    Split out of ``measure`` so the evaluation harness can run it on cached final
+    frames without re-loading 400-frame stacks. Returns the embolised mask ``shape``
+    plus the intermediates.
+
+    Keeps air-coloured regions that are tube-SHAPED (elongated OR sparse) and contain a
+    tubular ridge seed. ``bright_pct``/``sol_max`` tuned against the expert masks
+    (2026-11-02): lowering the air percentile 70->65 and loosening the solidity gate
+    0.5->0.6 recovers faint rhizoids (mean F1 0.676 -> 0.702; plant-60 recall ~0.53->0.66).
+    NOTE: edge SCALES are not yet excluded here (they share brightness+texture with
+    rhizoids); that needs expert scale annotation -- see detect_spatial scale work / DESIGN.
+    """
     from scipy.ndimage import label
     from skimage.filters import frangi
     from skimage.measure import regionprops
-    T = stack.shape[0]
-    final = stack[-max(int(round(T * tail_frac)), 1):].mean(0)
-    tissue = tissue_from_final(final, erode=2)                 # #2: tissue from the DRY frame
+    if tissue is None:
+        tissue = tissue_from_final(final, erode=2)            # #2: tissue from the DRY frame
     if air is None:
         air = float(np.percentile(final[tissue], bright_pct))
     colour = tissue & (final >= air)
@@ -95,16 +107,78 @@ def measure(stack, air=None, tail_frac=0.12, vessel_min=0.04, bright_pct=70,
     seeds = colour & (vn >= vessel_min)
     lbl, _ = label(colour); keep = []
     for p in regionprops(lbl):
-        if p.area < 8:
+        if p.area < min_area:
             continue
-        if ((p.eccentricity >= 0.9) or (p.solidity <= 0.5)) and seeds[tuple(p.coords.T)].any():
+        if ((p.eccentricity >= ecc_min) or (p.solidity <= sol_max)) and seeds[tuple(p.coords.T)].any():
             keep.append(p.label)
     shape = np.isin(lbl, keep)
+    return dict(tissue=tissue, air=float(air), colour=colour, shape=shape, ridge=vn)
+
+
+def ridge_map(final, tissue, sigmas=(0.5, 1, 1.5, 2, 3, 4)):
+    """Normalised Frangi tubeness of the final frame (0..~1 within tissue).
+
+    Finer sigmas than the legacy (1,2,3,4) so thin faint rhizoids register. High on
+    tube-like structures, ~0 on flat sheets (scales) and open tissue."""
+    from skimage.filters import frangi
+    v = np.nan_to_num(frangi(final, sigmas=sigmas, black_ridges=False))
+    return v / (v[tissue].max() + 1e-9)
+
+
+def detect_spatial_v2(final, tissue=None, bright_hi_pct=70, bright_lo_pct=45,
+                      seed_ridge=0.08, grow_ridge=0.02, sigmas=(0.5, 1, 1.5, 2, 3, 4),
+                      min_area=8, scale_area=600, scale_ecc=0.85,
+                      border_px=10, erode=2):
+    """Ridge-gated hysteresis detector: higher recall on faint tubes, rejects scales.
+
+    1. ``seed``  = bright (>=hi pct) AND strongly tubular  -> confident embolised centres.
+    2. ``cand``  = mildly bright (>=lo pct) AND weakly tubular -> faint tube continuations.
+    3. hysteresis: keep candidate components that contain a seed -> grows along faint
+       rhizoids without admitting flat/dim non-tube tissue.
+    4. scale rejection: the edge scales where rhizoids attach brighten like air but are
+       rounded SHEETS at the tissue margin, not tubes. Drop a component when it is large
+       AND not strongly elongated (low eccentricity -> a blob, whereas a thin rhizoid is
+       a line with eccentricity ~1 and is kept) AND touches the tissue border.
+    """
+    from scipy.ndimage import label, distance_transform_edt
+    from skimage.measure import regionprops
+    if tissue is None:
+        tissue = tissue_from_final(final, erode=erode)
+    vn = ridge_map(final, tissue, sigmas)
+    air_hi = float(np.percentile(final[tissue], bright_hi_pct))
+    air_lo = float(np.percentile(final[tissue], bright_lo_pct))
+    seed = tissue & (final >= air_hi) & (vn >= seed_ridge)
+    cand = tissue & (final >= air_lo) & (vn >= grow_ridge)
+    lbl, _ = label(cand)                                  # hysteresis grow
+    seeded = set(int(x) for x in np.unique(lbl[seed])) - {0}
+    tubes = np.isin(lbl, list(seeded)) if seeded else np.zeros_like(tissue)
+    edge_dist = distance_transform_edt(tissue)            # px distance into tissue
+    lbl2, _ = label(tubes); keep = []
+    for p in regionprops(lbl2):
+        if p.area < min_area:
+            continue
+        coords = tuple(p.coords.T)
+        touches_border = float(edge_dist[coords].min()) <= border_px
+        is_scale = (p.area >= scale_area and p.eccentricity <= scale_ecc
+                    and touches_border)
+        if not is_scale:
+            keep.append(p.label)
+    shape = np.isin(lbl2, keep)
+    return dict(tissue=tissue, air=air_hi, colour=tissue & (final >= air_lo),
+                shape=shape, ridge=vn)
+
+
+def measure(stack, air=None, tail_frac=0.12, vessel_min=0.04, bright_pct=65,
+            rise_frac=0.4):
+    T = stack.shape[0]
+    final = stack[-max(int(round(T * tail_frac)), 1):].mean(0)
+    d = detect_spatial(final, air=air, vessel_min=vessel_min, bright_pct=bright_pct)
+    tissue, shape = d["tissue"], d["shape"]
     onset = onset_start_of_rise(stack, shape, rise_frac=rise_frac)   # start-of-rise timing
     counts = np.bincount(onset[shape], minlength=T); cum = np.cumsum(counts)
     frac = cum / max(int(tissue.sum()), 1)
-    return dict(tissue=tissue, final=final, air=air, colour=colour, shape=shape,
-                onset=onset, cum=cum, frac=frac, tissue_px=int(tissue.sum()))
+    return dict(tissue=tissue, final=final, air=d["air"], colour=d["colour"], shape=shape,
+                ridge=d["ridge"], onset=onset, cum=cum, frac=frac, tissue_px=int(tissue.sum()))
 
 
 def run(folder: str, out_dir: str, bin_xy: int = 2, air=None, tail_frac: float = 0.12) -> dict:

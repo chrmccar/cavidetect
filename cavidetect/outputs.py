@@ -287,11 +287,15 @@ def save_final_png(final_img, out_dir: str, stem: str) -> str:
     return path
 
 
-def save_annotator(final_img, out_dir: str, stem: str, max_px: int = 1200) -> str:
+def save_annotator(final_img, out_dir: str, stem: str, max_px: int = 1200,
+                   heading: str | None = None, out_name: str | None = None) -> str:
     """Paint directly on the RAW final frame. No tissue mask, no dimming, no processing layer.
 
     You see the raw image exactly. Paint the air-filled tissue (Add/Erase brush); the optional
     Brightness slider pre-highlights bright pixels as a starting point. Export the mask as PNG.
+
+    ``heading`` overrides the on-page title (e.g. to request SCALE annotation instead of
+    embolism); ``out_name`` overrides the output .html filename.
     """
     import base64
     from PIL import Image
@@ -303,9 +307,9 @@ def save_annotator(final_img, out_dir: str, stem: str, max_px: int = 1200) -> st
     fin = np.asarray(fi, dtype=np.uint8)
     H, W = fin.shape
     fin_b64 = base64.b64encode(fin.tobytes()).decode()
-    html = (_ANNOTATOR_HTML.replace("__TITLE__", f"{stem} — raw final frame")
+    html = (_ANNOTATOR_HTML.replace("__TITLE__", heading or f"{stem} — raw final frame")
             .replace("__W__", str(W)).replace("__H__", str(H)).replace("__FIN__", fin_b64))
-    path = os.path.join(out_dir, f"{stem}_annotate.html")
+    path = os.path.join(out_dir, out_name or f"{stem}_annotate.html")
     with open(path, "w", encoding="utf-8") as f:
         f.write(html)
     return path
