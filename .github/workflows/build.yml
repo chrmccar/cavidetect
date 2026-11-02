@@ -9,6 +9,9 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+permissions:
+  contents: write   # needed to publish a Release on tag push
+
 jobs:
   build:
     strategy:
@@ -50,3 +53,12 @@ jobs:
           name: cavidetect-${{ runner.os }}
           path: dist/cavidetect-*.zip
           if-no-files-found: error
+
+      # On a version tag, publish (or update) a public Release with this OS's zip
+      # attached. Both matrix jobs target the same tag release and add their asset.
+      - name: Publish to Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/cavidetect-*.zip
+          fail_on_unmatched_files: true

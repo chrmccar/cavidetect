@@ -15,10 +15,10 @@ _CLI_CMDS = {"run", "batch", "colour-shape"}
 def main() -> None:
     argv = sys.argv[1:]
     if argv and argv[0] in _CLI_CMDS:
-        from .cli import main as cli_main
+        from cavidetect.cli import main as cli_main
         cli_main(argv)
         return
-    from .gui import main as gui_main
+    from cavidetect.gui import main as gui_main
     gui_main()
 
 
