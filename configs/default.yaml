@@ -1,0 +1,20 @@
+# cavidetect default parameters (M1). Copy + override per dataset.
+# Scale note: bin_xy>1 multiplies the effective um/px; set to 1 on the Mac (full res).
+bin_xy: 1
+spatial_sigma: 1.0
+temporal_smooth: 3
+
+w_long: 7            # before/after window (frames) for the step statistic
+step_min_dn: 10.0   # absolute grey-level floor (slow drying never clears this)
+step_k_sigma: 5.0   # also require step >= k * per-stack noise sigma
+rampfit_half: 10    # half-window for step-vs-ramp model comparison
+abrupt_ratio_max: 0.5   # accept if RSS_step/RSS_linear < this
+persist_frac: 0.5
+persist_frames: 8
+
+min_area_px: 4
+event_time_tol: 4
+
+tail_frac: 0.35
+drift_px_thresh: 1.0
+default_um_per_px: 2.5

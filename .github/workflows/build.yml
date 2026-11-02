@@ -1,0 +1,52 @@
+name: build-apps
+
+# Builds the self-contained double-click apps for macOS and Windows.
+# Triggers on a version tag (e.g. `git tag v0.1.0 && git push --tags`) or manually
+# from the Actions tab (Run workflow). Download the apps from the run's Artifacts.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package + build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pyinstaller
+
+      - name: Sanity-check (helper tests only; no display needed)
+        run: pip install pytest && pytest tests/test_gui_helpers.py tests/test_colour_shape.py -q
+
+      - name: Build with PyInstaller
+        run: pyinstaller cavidetect.spec --noconfirm
+
+      - name: Package macOS .app
+        if: runner.os == 'macOS'
+        run: |
+          cd dist
+          zip -r -y cavidetect-macos.zip cavidetect.app
+
+      - name: Package Windows folder
+        if: runner.os == 'Windows'
+        run: Compress-Archive -Path dist/cavidetect/* -DestinationPath dist/cavidetect-windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cavidetect-${{ runner.os }}
+          path: dist/cavidetect-*.zip
+          if-no-files-found: error

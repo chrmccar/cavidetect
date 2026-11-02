@@ -1,0 +1,25 @@
+# Big data and generated outputs — never upload these to GitHub.
+data/
+results/
+results_whole/
+results_report*.html
+example_outputs/
+../data/
+../starting substack/
+*_cs_viewer.html
+*_cs_proof.png
+*_annotate.html
+stack_inspection.png
+embolised_mask.png
+Screenshot*.png
+
+# Build / packaging artefacts (CI rebuilds these)
+dist/
+build/
+*.egg-info/
+
+# Python / OS cruft
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
