@@ -44,7 +44,7 @@ method. If a method errors, read the Progress log — the pipeline runs as a sub
 
 - GUI v2 (click-to-enlarge proof + auto-open viewer), **onset-timing fix** (start-of-rise),
   **✎ Annotate** + **📦 Bundle** buttons, and **standalone-app packaging** are all DONE and pushed.
-- **GitHub repo (private):** https://github.com/chrmccar/cavidetect — code only (data/results are
+- **GitHub repo (PUBLIC):** https://github.com/chrmccar/cavidetect — code only (data/results are
   gitignored). Pushed from the VM over the SSH key in `~/.ssh` (authenticates as `chrmccar`).
 - **CI build `v0.1.0` SUCCEEDED** on macOS + Windows (Actions run 41377249712).
 - **Built apps downloaded to the PROJECT ROOT** (one level ABOVE this repo):
