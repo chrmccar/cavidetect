@@ -168,20 +168,40 @@ def detect_spatial_v2(final, tissue=None, bright_hi_pct=70, bright_lo_pct=45,
                 shape=shape, ridge=vn)
 
 
-def measure(stack, air=None, tail_frac=0.12, vessel_min=0.04, bright_pct=65,
-            rise_frac=0.4):
+def measure(stack, method: str = "colour-frangi", params: dict | None = None,
+            tail_frac: float = 0.12, rise_frac: float = 0.4, bin_xy: int = 1):
+    """Measure embolism with the chosen detection method.
+
+    ``params`` are the method's parameters (resolved against its schema). Only
+    the spatial-detection stage is method-specific; tissue, onset timing and the
+    cumulative curve are shared. ``bin_xy`` folds binning into the pixel scale
+    the method sees (one binned pixel spans ``bin_xy`` original pixels) while the
+    returned ``params`` keep the true optical ``um_per_px``.
+    """
+    from . import methods as M
     T = stack.shape[0]
     final = stack[-max(int(round(T * tail_frac)), 1):].mean(0)
-    d = detect_spatial(final, air=air, vessel_min=vessel_min, bright_pct=bright_pct)
+    resolved = M.resolve_params(method, params or {})
+    for_detect = dict(resolved)
+    if "um_per_px" in for_detect:
+        for_detect["um_per_px"] = resolved["um_per_px"] * bin_xy   # µm per analysis pixel
+    tissue = tissue_from_final(final, erode=2)
+    d = M.get_method(method).detect(final, tissue, **for_detect)
     tissue, shape = d["tissue"], d["shape"]
     onset = onset_start_of_rise(stack, shape, rise_frac=rise_frac)   # start-of-rise timing
     counts = np.bincount(onset[shape], minlength=T); cum = np.cumsum(counts)
     frac = cum / max(int(tissue.sum()), 1)
-    return dict(tissue=tissue, final=final, air=d["air"], colour=d["colour"], shape=shape,
-                ridge=d["ridge"], onset=onset, cum=cum, frac=frac, tissue_px=int(tissue.sum()))
+    ridge = d.get("ridge")
+    if ridge is None:
+        ridge = np.zeros(final.shape, np.float32)
+    return dict(tissue=tissue, final=final, air=d.get("air"), colour=d["colour"], shape=shape,
+                ridge=ridge, onset=onset, cum=cum, frac=frac, tissue_px=int(tissue.sum()),
+                method=method, params=resolved)
 
 
-def run(folder: str, out_dir: str, bin_xy: int = 2, air=None, tail_frac: float = 0.12) -> dict:
+def run(folder: str, out_dir: str, bin_xy: int = 2, air=None, tail_frac: float = 0.12,
+        method: str = "colour-frangi", params: dict | None = None) -> dict:
+    import json
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -190,11 +210,27 @@ def run(folder: str, out_dir: str, bin_xy: int = 2, air=None, tail_frac: float =
     os.makedirs(out_dir, exist_ok=True)
     stem = os.path.basename(os.path.normpath(folder))
     stack = load_frames_binned(folder, bin_xy)
-    r = measure(stack, air=air, tail_frac=tail_frac)
+    params = dict(params or {})
+    if air is not None:                      # back-compat: --air folds into the method params
+        params.setdefault("air", air)
+    r = measure(stack, method=method, params=params, tail_frac=tail_frac, bin_xy=bin_xy)
     T = stack.shape[0]
+    um_per_px = r["params"].get("um_per_px", 2.5)
+    print("method=%s" % method, flush=True)
     print("air=%.1f  colour=%.1f%%  colour+shape=%.1f%% of tissue"
-          % (r["air"], 100 * r["colour"].sum() / max(r["tissue_px"], 1),
+          % ((r["air"] if r["air"] is not None else 0.0),
+             100 * r["colour"].sum() / max(r["tissue_px"], 1),
              100 * r["shape"].sum() / max(r["tissue_px"], 1)), flush=True)
+
+    # record exactly what produced this result, for reproducibility of an experimental run
+    try:
+        from .pipeline import __version__ as _ver
+    except Exception:
+        _ver = "?"
+    with open(os.path.join(out_dir, f"{stem}_cs_params.json"), "w", encoding="utf-8") as fh:
+        json.dump({"method": method, "params": r["params"], "bin": bin_xy,
+                   "tail_frac": tail_frac, "um_per_px": um_per_px, "version": _ver},
+                  fh, indent=2)
 
     fig = plt.figure(figsize=(20, 5))
     for k, (m, title) in enumerate([(None, "raw final"), (r["colour"], "COLOUR only"),
@@ -205,13 +241,16 @@ def run(folder: str, out_dir: str, bin_xy: int = 2, air=None, tail_frac: float =
     ax = fig.add_subplot(1, 4, 4); ax.plot(r["frac"] * 100, color="#c0392b", lw=2)
     ax.set_ylim(0, 100); ax.grid(alpha=.3); ax.set_xlabel("frame"); ax.set_ylabel("% tissue embolised")
     ax.set_title("cumulative embolised tissue")
+    fig.suptitle(f"method: {method}", x=0.01, ha="left", fontsize=11)
     plt.tight_layout(); plt.savefig(os.path.join(out_dir, f"{stem}_cs_proof.png"), dpi=95); plt.close()
 
     pd.DataFrame({"frame": np.arange(T), "embolised_area_px": r["cum"],
                   "frac_tissue_embolised": r["frac"]}).to_csv(
         os.path.join(out_dir, f"{stem}_cs_curve.csv"), index=False)
+    um_per_analysis_px = um_per_px * bin_xy
     res = SimpleNamespace(embolised=r["shape"], onset_frame=r["onset"], frac_embolised=r["frac"],
-                          cum_area=r["cum"].astype(np.int64), cum_area_um2=r["cum"] * (2.5 ** 2),
+                          cum_area=r["cum"].astype(np.int64),
+                          cum_area_um2=r["cum"] * (um_per_analysis_px ** 2),
                           tissue_px=r["tissue_px"], change_dn=r["final"])
     cout.save_embolism_viewer(stack, res, out_dir, f"{stem}_cs")
     # annotation tool: paint the correct embolised tissue on the raw final frame, export a PNG

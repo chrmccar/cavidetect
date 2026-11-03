@@ -70,6 +70,8 @@ def _clamp(v, spec: ParamSpec):
 
 
 def _coerce(spec: ParamSpec, v):
+    if v is None:                       # optional param left at "auto"
+        return None
     if spec.type == "bool":
         if isinstance(v, str):
             return v.strip().lower() in ("1", "true", "yes", "on")
@@ -117,9 +119,9 @@ def _shape_rules(p: dict) -> dict:
 
 def _detect_colour_frangi(final, tissue, **p):
     from . import colour_shape as cs
-    d = cs.detect_spatial(final, tissue=tissue, bright_pct=p["bright_pct"],
-                          vessel_min=p["vessel_min"], ecc_min=p["ecc_min"],
-                          sol_max=p["sol_max"], min_area=p["min_area"])
+    d = cs.detect_spatial(final, tissue=tissue, air=p.get("air"),
+                          bright_pct=p["bright_pct"], vessel_min=p["vessel_min"],
+                          ecc_min=p["ecc_min"], sol_max=p["sol_max"], min_area=p["min_area"])
     if p.get("apply_shape_filter"):
         from scipy.ndimage import label
         from .shape_filters import filter_regions
@@ -151,6 +153,8 @@ register(Method(
                   group="General", help="true optical scale; shape rules use µm"),
         ParamSpec("bright_pct", "Air-colour percentile", "int", 65, 0, 100,
                   group="Threshold", help="brightness cut within tissue"),
+        ParamSpec("air", "Manual air threshold", "float", None, group="Threshold",
+                  help="absolute grey-level cut; leave blank for the percentile above"),
         ParamSpec("vessel_min", "Min tubeness", "float", 0.04, 0.0, 1.0, group="Shape rules"),
         ParamSpec("ecc_min", "Min eccentricity", "float", 0.9, 0.0, 1.0, group="Shape rules"),
         ParamSpec("sol_max", "Max solidity", "float", 0.6, 0.0, 1.0, group="Shape rules"),
