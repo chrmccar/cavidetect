@@ -2,6 +2,63 @@
 
 Pick-up note for the next session. Read this first, then `DESIGN_SPEC.md`.
 
+## 2026-11-03 SESSION 3 — SELECTABLE DETECTION METHODS + CONFIGURABLE SETTINGS — read this first
+
+Built in response to the expert's request for **shape-based thresholding** (BioVoxxel Shape
+Filter: max inscribed circle, thinness ratio, elongation) and Chris's ask to **choose the
+method** and **expose more settings** before a run. Fully self-contained — **no ImageJ**.
+
+- **Spec + plan:** `docs/superpowers/specs/2026-11-03-selectable-detection-methods-design.md`
+  and `docs/superpowers/plans/2026-11-03-selectable-detection-methods.md`.
+- **Branch:** `feature/selectable-detection-methods` (not yet merged/pushed at time of writing).
+- **New method system (`cavidetect/methods.py`):** a registry maps a method name → a detector
+  + a **parameter schema** (`ParamSpec` list). The schema drives BOTH the GUI panel and the CLI
+  `--params` validation — add a future experimental method = one `detect` fn + its schema.
+- **Three methods:**
+  1. `colour-frangi` — **the current method, DEFAULT, byte-identical by default** (guarded by a
+     regression test). Optional `apply_shape_filter` toggle adds the BioVoxxel rules on top.
+  2. `shape-filter` — the expert's flow: contrast/band-pass → threshold (otsu|percentile) →
+     connected components → keep by **inscribed circle (µm) / thinness / elongation**. Defaults
+     seeded to the expert's numbers (7–25 µm, 0–0.6, 0.6–1).
+  3. `ridge-hysteresis` — exposes the old `detect_spatial_v2` (experimental).
+- **Shared pure-Python pieces (TDD'd on the VM):** `shape_filters.py` (BioVoxxel descriptors),
+  `preprocess_final.py` (gamma/CLAHE contrast + difference-of-Gaussians band-pass, default off).
+- **Pixel scale:** `um_per_px` is a setting (default **2.5** — a FALLBACK guess). The shape rules
+  are only physically meaningful once it's set to the collaborator's **real ImageJ calibration**.
+  Binning is folded in automatically (`um_per_analysis_px = um_per_px * bin`).
+- **Reproducibility:** every run writes `<stem>_cs_params.json` (method + resolved params + bin +
+  tail_frac + um_per_px + version); method is stamped on the proof image, results header, bundle.
+- **CLI:** `cavidetect colour-shape FOLDER --out X [--method NAME] [--params p.json] [--list-methods]`.
+  No `--method` → `colour-frangi` (unchanged). `--air` still works (now an optional param).
+- **GUI (Mac):** a **Method** dropdown; selecting a method rebuilds a grouped **Settings** panel
+  (General / Preprocess / Threshold / Shape rules) from the schema. Everything else (Run/Cancel,
+  viewer, annotate, bundle) unchanged.
+- **Tests:** 63 pass on the VM (`pytest -q`). Only the live Tk window needs the Mac.
+
+**MAC MANUAL CHECKS still to do (VM has no Tk display):** `pip install -e .` then `cavidetect-gui`
+→ (1) the Method dropdown switches the Settings panel; (2) run each method on `data/cavi600005`;
+(3) `<stem>_cs_params.json` is written and names the method; (4) the results header names the
+method. If a method errors, read the Progress log — the pipeline runs as a subprocess.
+
+## 2026-11-02 SESSION 2 — LIVE STATE (GitHub + distributable apps) — read this first
+
+- GUI v2 (click-to-enlarge proof + auto-open viewer), **onset-timing fix** (start-of-rise),
+  **✎ Annotate** + **📦 Bundle** buttons, and **standalone-app packaging** are all DONE and pushed.
+- **GitHub repo (private):** https://github.com/chrmccar/cavidetect — code only (data/results are
+  gitignored). Pushed from the VM over the SSH key in `~/.ssh` (authenticates as `chrmccar`).
+- **CI build `v0.1.0` SUCCEEDED** on macOS + Windows (Actions run 41377249712).
+- **Built apps downloaded to the PROJECT ROOT** (one level ABOVE this repo):
+  `../cavidetect-macos.zip` (~112 MB) and `../cavidetect-windows.zip` (~138 MB) — ready to send.
+- **ACTIONS FOR CHRIS:** (1) **revoke the personal-access-token** at
+  https://github.com/settings/tokens; (2) email the right zip to the collaborator (unsigned →
+  Mac: right-click→Open; Windows: More info→Run anyway, first launch only); (3) relaunch
+  `cavidetect-gui` on the Mac and run `cavi600005` to eyeball the new onset timing in the viewer.
+- **To rebuild later:** push a new tag `git tag vX.Y.Z && git push origin vX.Y.Z`, OR GitHub →
+  Actions → build-apps → Run workflow. Download from the run's **Artifacts** (browser) or via the
+  API with a fresh token. Full handoff + recipient steps: `DISTRIBUTION.md`.
+- **GitHub ops from the VM:** SSH push works (keys auth as `chrmccar`); there is **no `gh` CLI and
+  no saved API token**, so creating a repo and downloading artifacts need a user-supplied PAT.
+
 ## 2026-11-02 STATE — read this first (current method of record)
 
 **Objective (settled):** measure **total embolised tissue over time** (optical-vulnerability /

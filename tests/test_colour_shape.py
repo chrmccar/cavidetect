@@ -40,3 +40,54 @@ def test_onset_all_in_range_and_masked():
     mask = np.array([[True, True]])
     onset = cs.onset_start_of_rise(stack, mask)
     assert onset.min() >= 0 and onset.max() <= stack.shape[0] - 1
+
+
+def _emb_stack(T=40, Y=70, X=90, seed=0):
+    """A stack whose dry final frame has several bright elongated (air-filled)
+    tubes filling ~40% of a darker tissue body — enough for the default
+    colour-frangi method to fire (the air fraction must clear the percentile cut)."""
+    rng = np.random.default_rng(seed)
+    stack = np.full((T, Y, X), 30.0, np.float32)
+    body = np.zeros((Y, X), bool)
+    body[10:60, 10:80] = True
+    stack[:, body] = 45.0
+    tubes = np.zeros((Y, X), bool)
+    for r in range(14, 58, 6):
+        tubes[r:r + 3, 16:74] = True            # thin tubes
+    stack[T // 2:, tubes] = 210.0               # air-fill in the 2nd half
+    stack = stack + rng.normal(0, 2, stack.shape).astype(np.float32)
+    return np.clip(stack, 0, 255)
+
+
+def test_colour_frangi_default_matches_detect_spatial():
+    # Regression: the default method must reproduce the current detect_spatial mask.
+    stack = _emb_stack()
+    tail = max(int(round(stack.shape[0] * 0.12)), 1)
+    final = stack[-tail:].mean(0)
+    expected = cs.detect_spatial(final)["shape"]
+    assert expected.any(), "fixture should produce a non-empty detection"
+    got = cs.measure(stack)["shape"]
+    assert np.array_equal(got, expected)
+
+
+def test_empty_rules_give_zero_curve():
+    stack = _emb_stack()
+    r = cs.measure(stack, method="shape-filter",
+                   params={"inscribed_lo_um": 1000, "threshold": "otsu"})
+    assert r["frac"][-1] == 0.0
+
+
+def test_run_writes_params_json(tmp_path):
+    import json
+    import tifffile
+    folder = tmp_path / "cavi_test"
+    folder.mkdir()
+    for i, fr in enumerate(_emb_stack(T=12)):
+        tifffile.imwrite(folder / f"t_{i:04d}.tif", fr.astype(np.uint8))
+    out = tmp_path / "out"
+    cs.run(str(folder), str(out), bin_xy=1)
+    pj = out / "cavi_test_cs_params.json"
+    assert pj.exists()
+    data = json.loads(pj.read_text())
+    assert data["method"] == "colour-frangi"
+    assert "params" in data

@@ -49,9 +49,12 @@ def output_dir(save_dir: str, folder: str) -> str:
 
 def build_command(folder: str, outdir: str, bin_xy: int = 2,
                   air: float | None = None, tail_frac: float = 0.12,
-                  python_exe: str | None = None, frozen: bool | None = None) -> list[str]:
+                  python_exe: str | None = None, frozen: bool | None = None,
+                  method: str = "colour-frangi",
+                  params_path: str | None = None) -> list[str]:
     """Build the argv for the colour-shape pipeline. `air=None` means auto, so the
-    `--air` flag is omitted and the calibrated percentile is used.
+    `--air` flag is omitted and the calibrated percentile is used. `method` selects
+    the detection method; `params_path` (if given) is a JSON file of its parameters.
 
     In a PyInstaller build (`frozen`) there is no `python -m`, so we invoke the one
     bundled executable with the subcommand directly; it dispatches to the CLI (see
@@ -61,10 +64,31 @@ def build_command(folder: str, outdir: str, bin_xy: int = 2,
         frozen = bool(getattr(sys, "frozen", False))
     head = [exe] if frozen else [exe, "-m", "cavidetect.cli"]
     cmd = head + ["colour-shape", folder, "--out", outdir,
-                  "--bin", str(int(bin_xy)), "--tail-frac", str(tail_frac)]
+                  "--bin", str(int(bin_xy)), "--tail-frac", str(tail_frac),
+                  "--method", method]
+    if params_path is not None:
+        cmd += ["--params", params_path]
     if air is not None:
         cmd += ["--air", str(air)]
     return cmd
+
+
+def params_from_fields(method_name: str, values: dict) -> dict:
+    """Coerce raw GUI field values through the method's schema (types, ranges,
+    defaults; unknown keys dropped)."""
+    from . import methods as M
+    return M.resolve_params(method_name, values)
+
+
+def write_params_tempfile(params: dict) -> str:
+    """Write `params` as JSON to a temp file and return its path (the GUI passes
+    it to the pipeline via `--params`)."""
+    import json
+    import tempfile
+    fd, path = tempfile.mkstemp(suffix=".json", prefix="cavidetect_params_")
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(params, fh)
+    return path
 
 
 def parse_summary_line(line: str) -> dict | None:
@@ -175,27 +199,45 @@ def main() -> None:
             ttk.Entry(frm, textvariable=self.out_var).grid(row=1, column=1, sticky="ew", **pad)
             ttk.Button(frm, text="Choose…", command=self._pick_output).grid(row=1, column=2, **pad)
 
-            # --- advanced parameters ---
-            adv = ttk.Labelframe(frm, text="Parameters", padding=8)
-            adv.grid(row=2, column=0, columnspan=3, sticky="ew", **pad)
-            ttk.Label(adv, text="Bin (downsample):").grid(row=0, column=0, sticky="w", padx=4)
+            # --- method selector ---
+            from . import methods as _methods
+            self._tk = tk
+            self._ttk = ttk
+            self._methods_list = _methods.list_methods()
+            self._name_to_label = {n: lbl for n, lbl in self._methods_list}
+            self._label_to_name = {lbl: n for n, lbl in self._methods_list}
+            mrow = ttk.Frame(frm)
+            mrow.grid(row=2, column=0, columnspan=3, sticky="ew", **pad)
+            ttk.Label(mrow, text="Method:").pack(side="left")
+            first = self._methods_list[0][0]
+            self.method_var = tk.StringVar(value=first)
+            self.method_display = tk.StringVar(value=self._name_to_label[first])
+            combo = ttk.Combobox(mrow, state="readonly", width=52,
+                                 values=[lbl for _n, lbl in self._methods_list],
+                                 textvariable=self.method_display)
+            combo.pack(side="left", padx=8)
+            combo.bind("<<ComboboxSelected>>", lambda e: self._on_method_change())
+
+            # --- general run controls ---
+            grow = ttk.Frame(frm)
+            grow.grid(row=3, column=0, columnspan=3, sticky="ew", **pad)
+            ttk.Label(grow, text="Bin (downsample):").pack(side="left")
             self.bin_var = tk.IntVar(value=2)
-            ttk.Spinbox(adv, from_=1, to=8, width=5, textvariable=self.bin_var).grid(row=0, column=1, sticky="w", padx=4)
-
-            self.auto_air = tk.BooleanVar(value=True)
-            ttk.Checkbutton(adv, text="Auto air threshold", variable=self.auto_air,
-                            command=self._toggle_air).grid(row=0, column=2, sticky="w", padx=12)
-            self.air_var = tk.StringVar()
-            self.air_entry = ttk.Entry(adv, width=8, textvariable=self.air_var, state="disabled")
-            self.air_entry.grid(row=0, column=3, sticky="w", padx=4)
-
-            ttk.Label(adv, text="Tail fraction:").grid(row=0, column=4, sticky="w", padx=12)
+            ttk.Spinbox(grow, from_=1, to=8, width=5,
+                        textvariable=self.bin_var).pack(side="left", padx=(4, 18))
+            ttk.Label(grow, text="Tail fraction:").pack(side="left")
             self.tail_var = tk.StringVar(value="0.12")
-            ttk.Entry(adv, width=6, textvariable=self.tail_var).grid(row=0, column=5, sticky="w", padx=4)
+            ttk.Entry(grow, width=6, textvariable=self.tail_var).pack(side="left", padx=4)
+
+            # --- schema-driven method settings (rebuilt on method change) ---
+            self.params_frame = ttk.Labelframe(frm, text="Settings", padding=8)
+            self.params_frame.grid(row=4, column=0, columnspan=3, sticky="ew", **pad)
+            self.param_vars: dict = {}
+            self._build_params_panel()
 
             # --- run / cancel ---
             runrow = ttk.Frame(frm)
-            runrow.grid(row=3, column=0, columnspan=3, pady=8)
+            runrow.grid(row=5, column=0, columnspan=3, pady=8)
             self.run_btn = ttk.Button(runrow, text="▶  Run", command=self._run)
             self.run_btn.pack(side="left")
             self.auto_view = tk.BooleanVar(value=True)
@@ -203,10 +245,10 @@ def main() -> None:
                             variable=self.auto_view).pack(side="left", padx=14)
 
             # --- progress log ---
-            ttk.Label(frm, text="Progress:").grid(row=4, column=0, sticky="w", padx=8)
+            ttk.Label(frm, text="Progress:").grid(row=6, column=0, sticky="w", padx=8)
             logwrap = ttk.Frame(frm)
-            logwrap.grid(row=5, column=0, columnspan=3, sticky="nsew", padx=8, pady=4)
-            frm.rowconfigure(5, weight=1)
+            logwrap.grid(row=7, column=0, columnspan=3, sticky="nsew", padx=8, pady=4)
+            frm.rowconfigure(7, weight=1)
             logwrap.columnconfigure(0, weight=1)
             logwrap.rowconfigure(0, weight=1)
             self.log = tk.Text(logwrap, height=10, wrap="word", state="disabled",
@@ -218,7 +260,7 @@ def main() -> None:
 
             # --- results summary ---
             self.res = ttk.Labelframe(frm, text="Results", padding=8)
-            self.res.grid(row=6, column=0, columnspan=3, sticky="ew", **pad)
+            self.res.grid(row=8, column=0, columnspan=3, sticky="ew", **pad)
             self.headline = ttk.Label(self.res, text="— run a dataset to see results —",
                                       font=("TkDefaultFont", 13, "bold"))
             self.headline.grid(row=0, column=0, columnspan=3, sticky="w")
@@ -242,9 +284,57 @@ def main() -> None:
                                          command=self._bundle, state="disabled")
             self.bundle_btn.grid(row=5, column=0, sticky="w", pady=(0, 2))
 
-        # -- parameter helpers --
-        def _toggle_air(self) -> None:
-            self.air_entry.configure(state="disabled" if self.auto_air.get() else "normal")
+        # -- method + schema-driven settings --
+        def _on_method_change(self) -> None:
+            self.method_var.set(self._label_to_name[self.method_display.get()])
+            self._build_params_panel()
+
+        def _build_params_panel(self) -> None:
+            """(Re)build the settings widgets from the current method's schema,
+            grouped by ParamSpec.group. One Tk variable per parameter key."""
+            from . import methods as _methods
+            tk, ttk = self._tk, self._ttk
+            for child in self.params_frame.winfo_children():
+                child.destroy()
+            self.param_vars = {}
+            schema = _methods.get_method(self.method_var.get()).schema
+            groups: dict = {}
+            for spec in schema:
+                groups.setdefault(spec.group, []).append(spec)
+            col = 0
+            for gname, specs in groups.items():
+                box = ttk.Labelframe(self.params_frame, text=gname, padding=6)
+                box.grid(row=0, column=col, sticky="nw", padx=6, pady=2)
+                col += 1
+                for r, spec in enumerate(specs):
+                    label = spec.label + (f" ({spec.unit})" if spec.unit else "")
+                    if spec.type == "bool":
+                        var = tk.BooleanVar(value=bool(spec.default))
+                        ttk.Checkbutton(box, text=label, variable=var).grid(
+                            row=r, column=0, columnspan=2, sticky="w", pady=1)
+                    else:
+                        ttk.Label(box, text=label + ":").grid(row=r, column=0, sticky="w", pady=1)
+                        if spec.type == "choice":
+                            var = tk.StringVar(value=str(spec.default))
+                            ttk.Combobox(box, state="readonly", width=12,
+                                         values=list(spec.choices or ()),
+                                         textvariable=var).grid(row=r, column=1, sticky="w", padx=4)
+                        else:
+                            var = tk.StringVar(value="" if spec.default is None else str(spec.default))
+                            ttk.Entry(box, width=10, textvariable=var).grid(
+                                row=r, column=1, sticky="w", padx=4)
+                    self.param_vars[spec.key] = (spec, var)
+
+        def _collect_params(self) -> dict:
+            """Raw field values for params_from_fields. Empty numeric/choice fields
+            are omitted so they fall back to the schema default (e.g. blank 'air' = auto)."""
+            raw = {}
+            for key, (spec, var) in self.param_vars.items():
+                v = var.get()
+                if spec.type in ("int", "float", "choice") and isinstance(v, str) and v.strip() == "":
+                    continue
+                raw[key] = v
+            return raw
 
         def _pick_input(self) -> None:
             d = filedialog.askdirectory(title="Choose the folder of frame TIFFs")
@@ -277,19 +367,23 @@ def main() -> None:
                 self._append("! Choose a save location first.\n")
                 return
             try:
-                air = None if self.auto_air.get() else float(self.air_var.get())
                 tail = float(self.tail_var.get())
                 bin_xy = int(self.bin_var.get())
             except ValueError:
-                self._append("! Bin / air / tail fraction must be numbers.\n")
+                self._append("! Bin / tail fraction must be numbers.\n")
                 return
+
+            method = self.method_var.get()
+            params = params_from_fields(method, self._collect_params())
+            params_path = write_params_tempfile(params)
 
             self.stem = stem_of(folder)
             self.out_dir = output_dir(save, folder)
             os.makedirs(self.out_dir, exist_ok=True)
-            self._run_params = {"input": folder, "bin": bin_xy,
-                                "air": "auto" if air is None else air, "tail_frac": tail}
-            cmd = build_command(folder, self.out_dir, bin_xy=bin_xy, air=air, tail_frac=tail)
+            self._run_params = {"input": folder, "bin": bin_xy, "method": method,
+                                "tail_frac": tail, "params": params}
+            cmd = build_command(folder, self.out_dir, bin_xy=bin_xy, tail_frac=tail,
+                                method=method, params_path=params_path)
 
             # reset UI
             self.log.configure(state="normal"); self.log.delete("1.0", "end"); self.log.configure(state="disabled")
@@ -362,10 +456,11 @@ def main() -> None:
             paths = artefact_paths(self.out_dir, self.stem)
             self._proof_path = paths["proof"]
             frac = final_fraction(paths["curve"])
+            method = self._run_params.get("method", "")
             if frac is not None:
-                self.headline.configure(text=f"{frac * 100:.1f}%  of tissue embolised")
+                self.headline.configure(text=f"{frac * 100:.1f}%  of tissue embolised   ·   {method}")
             else:
-                self.headline.configure(text="done (curve not found)")
+                self.headline.configure(text=f"done (curve not found)   ·   {method}")
             if self.summary:
                 self.detail.configure(
                     text=(f"air threshold = {self.summary['air']:.0f}    "
@@ -428,9 +523,10 @@ def main() -> None:
         def _info_text(self, extra) -> str:
             lines = [f"dataset: {self.stem}",
                      f"input: {self._run_params.get('input', '')}",
+                     f"method: {self._run_params.get('method', '')}",
                      f"bin: {self._run_params.get('bin', '')}",
-                     f"air: {self._run_params.get('air', '')}",
-                     f"tail_frac: {self._run_params.get('tail_frac', '')}"]
+                     f"tail_frac: {self._run_params.get('tail_frac', '')}",
+                     f"params: {self._run_params.get('params', '')}"]
             frac = final_fraction(artefact_paths(self.out_dir, self.stem)["curve"])
             if frac is not None:
                 lines.append(f"final % tissue embolised: {frac * 100:.1f}")

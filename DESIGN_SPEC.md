@@ -164,3 +164,21 @@ Ran a per-pixel abrupt/gradual detector on 2×-binned crops of plants 49, 53, 60
 - **Validated:** event vs gradual pixels are clearly separable at the trace level (sharp spike incl. overshoot vs slow ramp) in both abrupt (49) and gradual-dominated (53) plants; the max-step map cleanly traces the rhizoid network.
 - **Failed as expected:** naive detector kept ~50% of pixels. Causes: (a) σ-threshold meaningless after smoothing — fixed by an absolute DN floor; (b) two-window abruptness ratio too noisy — replaced by change-point step-vs-ramp; (c) grouping merged whole bundles — fixed by watershed + event-time coherence.
 - **Engineering:** VM swap-thrashes on full-res stacks (a bare sqrt took 42 s); binning + intermediate frees made it finish. Confirms development/iteration belongs on the Mac.
+
+## Appendix B — Selectable detection methods (2026-11-03)
+The spatial-detection stage is now pluggable (`cavidetect/methods.py`). A `Method(name, label,
+detect, schema)` is registered in a REGISTRY; `detect(final, tissue, **params) -> dict` returns at
+least `shape` and `colour` masks. The `schema` (a list of `ParamSpec`) is the single source of
+truth that drives both the GUI settings panel and the CLI `--params` validation (`resolve_params`
+coerces/clamps/defaults and drops unknown keys). See the design doc at
+`docs/superpowers/specs/2026-11-03-selectable-detection-methods-design.md`.
+
+**To add an experimental method:** write a `detect(final, tissue, **params)` function (reuse
+`shape_filters.filter_regions` / `preprocess_final` as needed), define its `ParamSpec` schema
+(group each param General/Preprocess/Threshold/"Shape rules"), and `register(Method(...))`. No GUI
+or CLI edits are needed — the dropdown and the settings panel pick it up from `list_methods()`.
+
+Shipped methods: `colour-frangi` (default, = the calibrated current method), `shape-filter`
+(BioVoxxel inscribed-circle/thinness/elongation on a thresholded final frame), `ridge-hysteresis`
+(exposes `detect_spatial_v2`). Shape rules are entered in µm; `um_per_px` (default 2.5, a fallback —
+set to the real optical calibration) times `bin` gives µm per analysis pixel.
