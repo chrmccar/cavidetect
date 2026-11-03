@@ -1,6 +1,34 @@
-# CONTINUE HERE — cavitation detection, night of 2026-10-30
+# CONTINUE HERE — cavitation detection
 
 Pick-up note for the next session. Read this first, then `DESIGN_SPEC.md`.
+
+## 2026-11-03 — WHERE THINGS STAND RIGHT NOW (read this box first)
+
+- **Selectable detection methods SHIPPED.** Merged to `main` and tagged **`v0.2.0`** (pushed).
+  CI `build-apps` then builds the macOS + Windows apps and **publishes them to the public
+  Release**: https://github.com/chrmccar/cavidetect/releases/tag/v0.2.0
+- **Repo is PUBLIC** (verified via API). The collaborator downloads the new app from that
+  Releases page exactly as before — no change to how they get it.
+- **Everything committed + pushed; working tree clean; on `main`.** The feature branch
+  `feature/selectable-detection-methods` is also on origin (a PR was requested but opening it
+  needs a browser/PAT — not blocking; the merge already landed on main).
+
+### Still TO DO (next session / on the Mac)
+1. **Confirm the `v0.2.0` CI build went green** (GitHub → Actions) and that the Release has both
+   zips attached. If the build FAILED, read the log and fix (the frozen app is never launched in
+   CI — past Windows-only crashes slipped through: relative-import and cp1252/encoding bugs).
+2. **Mac GUI manual checks** (VM has no Tk display): `pip install -e . && cavidetect-gui` →
+   (a) the **Method** dropdown switches the Settings panel; (b) run each method on
+   `data/cavi600005`; (c) `<stem>_cs_params.json` is written and names the method;
+   (d) the results header names the method.
+3. **Set `µm per pixel` to the collaborator's REAL ImageJ calibration** — the shape rules are in
+   µm and only physically meaningful once it's right; **2.5 is a fallback guess**.
+4. Two deferred minors (non-urgent): `colour-shape --list-methods` still requires the `folder`
+   positional + `--out` (argparse quirk); the GUI lays schema groups out in columns, which may be
+   wide for `shape-filter` (4 groups) — check spacing on the Mac.
+
+Design + plan for this work: `docs/superpowers/specs/2026-11-03-selectable-detection-methods-design.md`
+and `docs/superpowers/plans/2026-11-03-selectable-detection-methods.md`.
 
 ## 2026-11-03 SESSION 3 — SELECTABLE DETECTION METHODS + CONFIGURABLE SETTINGS — read this first
 
