@@ -29,6 +29,12 @@ rules (in µm), run, and compare results; the current calibrated method (F1≈0.
 reachable and unchanged by default; every result records the method + exact settings that
 produced it.
 
+**Fully self-contained — no ImageJ.** Every descriptor the expert uses in ImageJ
+(BioVoxxel Shape Filter: inscribed circle, thinness ratio, elongation) and the band-pass
+are **reimplemented in pure Python** (skimage/scipy) inside the `cavidetect` package. The
+words "ImageJ flow"/"ImageJ-style" below describe *which measurements we replicate*, not a
+dependency: the pipeline never calls out to, requires, or assumes ImageJ at any step.
+
 ### Non-goals (YAGNI)
 
 - No new detection algorithms beyond the three below.
