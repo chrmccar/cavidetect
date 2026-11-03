@@ -4,7 +4,7 @@
 `batch` treats each immediate subfolder of single-page frames as ONE sequence, and still
 walks the rest for multi-page crop stacks."""
 from __future__ import annotations
-import argparse, glob, os, sys
+import argparse, glob, json, os, sys
 import tifffile
 from .config import Config
 from .pipeline import run_stack, __version__
@@ -42,6 +42,9 @@ def main(argv=None):
     pc.add_argument("--bin", type=int, default=2)
     pc.add_argument("--air", type=float, default=None, help="manual air-colour threshold (else calibrated percentile)")
     pc.add_argument("--tail-frac", type=float, default=0.12)
+    pc.add_argument("--method", default="colour-frangi", help="detection method (see --list-methods)")
+    pc.add_argument("--params", default=None, help="JSON file of method parameters")
+    pc.add_argument("--list-methods", action="store_true", help="print the available methods and exit")
 
     a = p.parse_args(argv)
     cfg = Config.load(getattr(a, "config", None))
@@ -49,8 +52,28 @@ def main(argv=None):
         cfg.skip_events = True
 
     if a.cmd == "colour-shape":
+        from . import methods as M
         from .colour_shape import run as run_cs
-        run_cs(a.folder, a.out, bin_xy=a.bin, air=a.air, tail_frac=a.tail_frac)
+        if a.list_methods:
+            for name, label in M.list_methods():
+                print(f"{name} — {label}")
+            sys.exit(0)
+        if a.method not in M.REGISTRY:
+            print(f"unknown method {a.method!r}; valid methods: {', '.join(M.REGISTRY)}",
+                  file=sys.stderr)
+            sys.exit(2)
+        params: dict = {}
+        if a.params:
+            try:
+                with open(a.params, encoding="utf-8") as fh:
+                    params = json.load(fh)
+                if not isinstance(params, dict):
+                    raise ValueError("params JSON must be an object of key:value")
+            except (OSError, ValueError) as ex:
+                print(f"could not read --params {a.params!r}: {ex}", file=sys.stderr)
+                sys.exit(2)
+        run_cs(a.folder, a.out, bin_xy=a.bin, air=a.air, tail_frac=a.tail_frac,
+               method=a.method, params=params)
         print(f"-> {a.out}/{os.path.basename(os.path.normpath(a.folder))}_cs_viewer.html")
         return
 
