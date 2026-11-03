@@ -41,6 +41,36 @@ def test_build_command_frozen_omits_module():
     assert "-m" not in cmd
 
 
+def test_build_command_includes_method_and_params():
+    cmd = gui.build_command("/d", "/o", method="shape-filter",
+                            params_path="/tmp/p.json", python_exe="py")
+    assert cmd[cmd.index("--method") + 1] == "shape-filter"
+    assert cmd[cmd.index("--params") + 1] == "/tmp/p.json"
+
+
+def test_build_command_default_method_backcompat():
+    cmd = gui.build_command("/d", "/o", python_exe="py")
+    assert cmd[:4] == ["py", "-m", "cavidetect.cli", "colour-shape"]
+    assert "/d" in cmd and cmd[cmd.index("--out") + 1] == "/o"
+    assert cmd[cmd.index("--method") + 1] == "colour-frangi"
+    assert "--params" not in cmd            # omitted when no params file
+
+
+def test_params_from_fields_coerces():
+    p = gui.params_from_fields("shape-filter", {"bright_pct": "70"})
+    assert p["bright_pct"] == 70
+
+
+def test_write_params_tempfile_roundtrips():
+    import json
+    path = gui.write_params_tempfile({"bright_pct": 70, "contrast": "gamma"})
+    try:
+        with open(path, encoding="utf-8") as fh:
+            assert json.load(fh) == {"bright_pct": 70, "contrast": "gamma"}
+    finally:
+        os.remove(path)
+
+
 def test_build_bundle_zips_results_and_extras(tmp_path):
     out = tmp_path / "cavi600005"
     out.mkdir()
