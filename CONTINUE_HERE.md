@@ -2,6 +2,29 @@
 
 Pick-up note for the next session. Read this first, then `DESIGN_SPEC.md`.
 
+## 2026-11-05 — v0.3.1: VIEWER MEMORY FIX (read first)
+
+Expert hit `numpy ArrayMemoryError: 14.6 GiB (400,1920,2560) float64` in
+`save_embolism_viewer` on a 16 GB Windows laptop (`CaviDetect_memory_optimization_v2.md`).
+**Root cause:** `g = np.clip((s - lo)/rng, 0, 1)` — `s` is float32 but `lo` (from
+`np.percentile`) is float64, so the subtraction promoted the WHOLE stack to float64 (14.6 GiB),
+and it built all 400 frames though only ~90 timepoints are rendered.
+**Fix (byte-identical output, pins added):**
+- `outputs.save_embolism_viewer` / `save_animation`: normalise ONE frame at a time to uint8
+  (`_grey_u8(t)`), never the full stack. Per-frame temp ~tens of MB vs 14.6 GiB.
+- `colour_shape.load_frames_binned`: preallocate + fill in place instead of
+  `np.stack([list of all frames])` (was ~2x peak during load).
+- `colour_shape.onset_start_of_rise`: `del sm` (the full smoothed copy) before allocating the
+  bool arrays.
+Tests: `tests/test_viewer_memory.py` (per-frame grey == old `g[t]`; structural guard that
+`np.clip` never receives the 3-D stack). All pass.
+**Remaining memory floor (NOT a bug):** the current algorithm holds the full float32 stack
+(~7.3 GiB at full res) and `onset`/`temporal` add bool/smoothed arrays on top — the peak is now
+the detection stage, not the viewer. Getting to ≤5 GB needs pixel-chunked streaming of
+onset/temporal (and/or holding the stack as uint8 with per-op float casts); that is
+fidelity-sensitive and must be validated on real full-res data on the Mac — recommended next,
+not done blind. Could not reproduce full-res on the VM (7.4 GB total).
+
 ## 2026-11-05 — v0.3.0: EXPERT v0.2.0 BRIEF IMPLEMENTED (read this box first)
 
 The expert returned a 7-item development brief (`../CaviDetect_v0.2.0_compact_development_spec.md`).

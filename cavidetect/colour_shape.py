@@ -24,7 +24,15 @@ def load_frames_binned(folder: str, bin_xy: int = 2):
         return a[::bin_xy, ::bin_xy].astype(np.float32)
 
     t = time.time()
-    stack = np.stack([_g(f) for f in files])
+    # Preallocate and fill in place: building a Python list of all frames and then
+    # np.stack()-ing it holds two full copies of the stack at once (~2x peak RAM, e.g.
+    # ~14.6 GiB for 400x1920x2560). One frame is read at a time into the final buffer.
+    first = _g(files[0])
+    stack = np.empty((len(files), *first.shape), np.float32)
+    stack[0] = first
+    del first
+    for i in range(1, len(files)):
+        stack[i] = _g(files[i])
     print(f"loaded {len(files)} frames {stack.shape} in {time.time()-t:.0f}s", flush=True)
     return stack
 
@@ -66,6 +74,7 @@ def onset_start_of_rise(stack, mask, rise_frac=0.4, persist=3, smooth=3):
     hi = sm.max(0)                                   # each pixel's own bright level
     thr = lo + rise_frac * (hi - lo)                 # a level early in its own rise
     above = sm >= thr[None]
+    del sm                                           # free the full smoothed copy before the bool arrays
     sust = above.copy()                              # "stays above for `persist` frames"
     for s in range(1, max(1, persist)):
         sust[:-s] &= above[s:]
