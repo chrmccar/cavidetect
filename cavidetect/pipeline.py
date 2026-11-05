@@ -7,7 +7,7 @@ from . import io as cio, characterise as cch, preprocess as cpp, detect as cdet
 from . import rhizoid as crh, tubes as ctub, outputs as cout, embolism as cemb
 from .config import Config
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 
 def run_stack(path: str, out_dir: str, cfg: Config | None = None,

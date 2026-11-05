@@ -105,12 +105,12 @@ def save_animation(s, det, out_dir: str, stem: str, stride: int = 3, max_px: int
     T, Y, X = s.shape
     ef = embolised_by_frame(det)
     lo, hi = np.percentile(s, [2, 99]); rng = max(hi - lo, 1e-3)
-    g = np.clip((s - lo) / rng, 0, 1)
     scale = min(1.0, max_px / max(Y, X))
     frames = []
     ts = list(range(0, T, stride))
     for t in ts:
-        base = (g[t] * 255).astype(np.uint8)
+        # per-frame uint8, never a full-stack float64 copy (see save_embolism_viewer)
+        base = (np.clip((s[t] - lo) / rng, 0, 1) * 255).astype(np.uint8)
         rgb = np.stack([base, base, base], -1)
         emb = ef <= t
         rgb[emb] = (0.15 * rgb[emb] + np.array([217, 30, 30]) * 0.85).astype(np.uint8)
@@ -178,7 +178,14 @@ def save_embolism_viewer(s, result, out_dir: str, stem: str,
     from PIL import Image
     T, Y, X = s.shape
     lo, hi = np.percentile(s, [2, 99]); rng = max(hi - lo, 1e-3)
-    g = np.clip((s - lo) / rng, 0, 1)
+    # Normalise ONE frame at a time (uint8), never the whole stack: `s` is float32 but
+    # `lo` is float64, so `s - lo` would promote the entire (T,Y,X) stack to float64
+    # (e.g. 14.6 GiB for 400x1920x2560) even though only the rendered timepoints are used.
+    # A single 2D frame is ~tens of MB and released each iteration. Values are identical to
+    # the previous `g[t]` (the same expression, sliced per frame).
+    def _grey_u8(t):
+        return (np.clip((s[t] - lo) / rng, 0, 1) * 255).astype(np.uint8)
+
     onset, emb = result.onset_frame, result.embolised
     scale = min(1.0, max_px / max(Y, X))
     newsize = (max(1, int(X * scale)), max(1, int(Y * scale)))
@@ -193,7 +200,7 @@ def save_embolism_viewer(s, result, out_dir: str, stem: str,
     tps = sorted(set(np.linspace(0, T - 1, min(n_timepoints, T)).astype(int).tolist()))
     raw_imgs, ov_imgs = [], []
     for t in tps:
-        base = (g[t] * 255).astype(np.uint8)
+        base = _grey_u8(t)
         rgb = np.stack([base, base, base], -1)
         raw_imgs.append(_b64(rgb))
         mask = emb & (onset >= 0) & (onset <= t)
