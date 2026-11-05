@@ -45,6 +45,10 @@ def main(argv=None):
     pc.add_argument("--method", default="colour-frangi", help="detection method (see --list-methods)")
     pc.add_argument("--params", default=None, help="JSON file of method parameters")
     pc.add_argument("--list-methods", action="store_true", help="print the available methods and exit")
+    pc.add_argument("--frame-interval", type=float, default=15.0,
+                    help="seconds between frames (for the onset-time column; default 15)")
+    pc.add_argument("--no-tiffs", action="store_true", help="skip the per-frame/cumulative binary TIFFs")
+    pc.add_argument("--no-diagnostics", action="store_true", help="skip the diagnostic stage montage")
 
     a = p.parse_args(argv)
     cfg = Config.load(getattr(a, "config", None))
@@ -73,7 +77,8 @@ def main(argv=None):
                 print(f"could not read --params {a.params!r}: {ex}", file=sys.stderr)
                 sys.exit(2)
         run_cs(a.folder, a.out, bin_xy=a.bin, air=a.air, tail_frac=a.tail_frac,
-               method=a.method, params=params)
+               method=a.method, params=params, frame_interval_s=a.frame_interval,
+               write_tiffs=not a.no_tiffs, write_diagnostics=not a.no_diagnostics)
         print(f"-> {a.out}/{os.path.basename(os.path.normpath(a.folder))}_cs_viewer.html")
         return
 
