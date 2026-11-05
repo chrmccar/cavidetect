@@ -2,6 +2,42 @@
 
 Pick-up note for the next session. Read this first, then `DESIGN_SPEC.md`.
 
+## ⭐ NEXT SESSION / TOMORROW (2026-11-06) — start here
+
+State at end of 2026-11-05: shipped **v0.3.0** (expert's 7-item v0.2.0 brief, 8 increments)
+and **v0.3.1** (viewer 14.6 GiB OOM fix). `main` == `origin/main`, working tree clean,
+tags v0.3.0 + v0.3.1 on origin, CI green, both Releases published w/ macOS+Windows zips.
+96 tests pass on the VM. Everything below is **Mac-only** (VM has no Tk/browser display and
+can't hold a full-res stack — only 7.4 GB, and it was load-avg ~9 all session so tests ran slow).
+
+Do these in order:
+1. **Confirm the v0.3.1 OOM fix on REAL full-res data.** On the Mac run the viewer export on a
+   400-frame full-res stack (`cavidetect colour-shape ../data/cavi490001 --out /tmp/x --bin 1`),
+   watch peak RAM. Expect it to complete now (was 14.6 GiB hard-fail). If still tight, the peak is
+   the DETECTION stage holding the full float32 stack (~7.3 GiB) + onset/temporal bool arrays — see
+   the v0.3.1 box below. Next step for ≤5 GB = pixel-chunked streaming of `onset_start_of_rise` /
+   `temporal_evidence` (fidelity-sensitive → assert byte-identical onset/mask vs current before
+   shipping). I did NOT do this blind; needs the real data.
+2. **Eyeball the new UIs in a browser** (can't on VM): the diagnostic stage montage
+   (`*_cs_stages.png`), the confidence viewer (`*_cs_confidence.html`, temporal method only) and the
+   multi-frame annotator (`*_cs_multiframe_annotate.html`). Check the method dropdown in the GUI now
+   lists **temporal-evidence**.
+3. **Run each method on real `data/cavi*` full-res** and compare recall vs v0.2.0, esp. the dense
+   left/central bundles the expert flagged. `temporal-evidence` is the recall play (uses the frame
+   stack, not just the final frame).
+4. **Set the collaborator's REAL µm/px** (still the 2.5 fallback) — shape rules are only
+   meaningful once it's right.
+5. **Train the §3 ML model LOPO** on the `annotated/` expert masks (sklearn is in `extra`; VM has it
+   installed via --break-system-packages, Mac needs `pip install -e .[extra]`). Compare to baseline.
+   NB there was NO ML before v0.3.0 — this is from scratch.
+6. **§8 shrinkage companion** — deferred; separate repo `thallus_shrinkage`. Only after the detector
+   + shared segmentation are stable.
+7. Housekeeping (optional): local merged branches `docs/v0.2.0-roadmap`, `feature/v0.2.0-build`,
+   `fix/viewer-memory` can be deleted (all merged to main); nothing on them is missing from origin.
+
+Roadmap doc: `docs/superpowers/specs/2026-11-05-cavidetect-v0.2.0-roadmap.md`.
+
+
 ## 2026-11-05 — v0.3.1: VIEWER MEMORY FIX (read first)
 
 Expert hit `numpy ArrayMemoryError: 14.6 GiB (400,1920,2560) float64` in
