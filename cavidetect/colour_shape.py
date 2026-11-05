@@ -112,7 +112,11 @@ def detect_spatial(final, air=None, vessel_min=0.04, bright_pct=65, tissue=None,
         if ((p.eccentricity >= ecc_min) or (p.solidity <= sol_max)) and seeds[tuple(p.coords.T)].any():
             keep.append(p.label)
     shape = np.isin(lbl, keep)
-    return dict(tissue=tissue, air=float(air), colour=colour, shape=shape, ridge=vn)
+    # `stages` exposes the intermediate masks for the diagnostic montage (§1 of the
+    # v0.2.0 brief). It never changes `shape`/`colour`, so the regression pin is safe.
+    return dict(tissue=tissue, air=float(air), colour=colour, shape=shape, ridge=vn,
+                stages={"brightness": colour, "frangi": vn, "seed": seeds,
+                        "accepted": shape})
 
 
 def ridge_map(final, tissue, sigmas=(0.5, 1, 1.5, 2, 3, 4)):
@@ -186,27 +190,39 @@ def measure(stack, method: str = "colour-frangi", params: dict | None = None,
     if "um_per_px" in for_detect:
         for_detect["um_per_px"] = resolved["um_per_px"] * bin_xy   # µm per analysis pixel
     tissue = tissue_from_final(final, erode=2)
-    d = M.get_method(method).detect(final, tissue, **for_detect)
+    mth = M.get_method(method)
+    if mth.needs_stack:                          # temporal methods see the whole stack
+        d = mth.detect(final, tissue, stack=stack, **for_detect)
+    else:
+        d = mth.detect(final, tissue, **for_detect)
     tissue, shape = d["tissue"], d["shape"]
-    onset = onset_start_of_rise(stack, shape, rise_frac=rise_frac)   # start-of-rise timing
-    counts = np.bincount(onset[shape], minlength=T); cum = np.cumsum(counts)
+    # a stack-aware method may supply its own per-pixel onset; otherwise date the start of rise
+    onset = d.get("onset")
+    if onset is None:
+        onset = onset_start_of_rise(stack, shape, rise_frac=rise_frac)
+    valid = shape & (onset >= 0)                 # onset is -1 where not embolised
+    counts = np.bincount(onset[valid], minlength=T); cum = np.cumsum(counts)
     frac = cum / max(int(tissue.sum()), 1)
     ridge = d.get("ridge")
     if ridge is None:
         ridge = np.zeros(final.shape, np.float32)
     return dict(tissue=tissue, final=final, air=d.get("air"), colour=d["colour"], shape=shape,
                 ridge=ridge, onset=onset, cum=cum, frac=frac, tissue_px=int(tissue.sum()),
-                method=method, params=resolved)
+                method=method, params=resolved, stages=d.get("stages"),
+                confidence=d.get("confidence"), transition=d.get("transition"))
 
 
 def run(folder: str, out_dir: str, bin_xy: int = 2, air=None, tail_frac: float = 0.12,
-        method: str = "colour-frangi", params: dict | None = None) -> dict:
+        method: str = "colour-frangi", params: dict | None = None,
+        frame_interval_s: float = 15.0, write_tiffs: bool = True,
+        write_diagnostics: bool = True) -> dict:
     import json
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     import pandas as pd
     from types import SimpleNamespace
+    from . import diagnostics as cdiag
     os.makedirs(out_dir, exist_ok=True)
     stem = os.path.basename(os.path.normpath(folder))
     stack = load_frames_binned(folder, bin_xy)
@@ -231,6 +247,12 @@ def run(folder: str, out_dir: str, bin_xy: int = 2, air=None, tail_frac: float =
         json.dump({"method": method, "params": r["params"], "bin": bin_xy,
                    "tail_frac": tail_frac, "um_per_px": um_per_px, "version": _ver},
                   fh, indent=2)
+    # §7 full run metadata (superset of params.json): adds calibration + frame interval
+    um_per_analysis_px = um_per_px * bin_xy
+    cout.write_run_metadata(out_dir, f"{stem}_cs", {
+        "method": method, "params": r["params"], "bin": bin_xy, "tail_frac": tail_frac,
+        "um_per_px": um_per_px, "um_per_analysis_px": um_per_analysis_px,
+        "frame_interval_s": frame_interval_s, "n_frames": T, "version": _ver})
 
     fig = plt.figure(figsize=(20, 5))
     for k, (m, title) in enumerate([(None, "raw final"), (r["colour"], "COLOUR only"),
@@ -247,7 +269,6 @@ def run(folder: str, out_dir: str, bin_xy: int = 2, air=None, tail_frac: float =
     pd.DataFrame({"frame": np.arange(T), "embolised_area_px": r["cum"],
                   "frac_tissue_embolised": r["frac"]}).to_csv(
         os.path.join(out_dir, f"{stem}_cs_curve.csv"), index=False)
-    um_per_analysis_px = um_per_px * bin_xy
     res = SimpleNamespace(embolised=r["shape"], onset_frame=r["onset"], frac_embolised=r["frac"],
                           cum_area=r["cum"].astype(np.int64),
                           cum_area_um2=r["cum"] * (um_per_analysis_px ** 2),
@@ -255,5 +276,22 @@ def run(folder: str, out_dir: str, bin_xy: int = 2, air=None, tail_frac: float =
     cout.save_embolism_viewer(stack, res, out_dir, f"{stem}_cs")
     # annotation tool: paint the correct embolised tissue on the raw final frame, export a PNG
     cout.save_annotator(stack[-1], out_dir, f"{stem}_cs")
+
+    # §1 diagnostic montage of every pipeline stage (see where recall is lost)
+    if write_diagnostics and r.get("stages"):
+        cdiag.save_stage_montage(r, out_dir, stem)
+    # §7 event-time LUT + per-region onset table (confidence/transition when the method gives them)
+    scale_um2 = um_per_analysis_px ** 2
+    cout.save_event_lut(r["onset"], r["shape"], r["final"], out_dir, f"{stem}_cs", n_frames=T)
+    cout.write_onset_table(r["onset"], r["shape"], out_dir, f"{stem}_cs",
+                           confidence=r.get("confidence"), transition=r.get("transition"),
+                           scale_um2=scale_um2, frame_interval_s=frame_interval_s)
+    # §6 confidence-threshold viewer (only methods that score candidates, e.g. temporal-evidence)
+    if r.get("confidence") is not None:
+        cout.save_confidence_viewer(r["final"], r["confidence"], out_dir, f"{stem}_cs",
+                                    tissue=r["tissue"])
+    # §7/§1 per-frame + cumulative binary TIFF of newly-detected pixels (streamed, sparse-compressed)
+    if write_tiffs:
+        cout.save_event_tiffs(r["onset"], r["shape"], T, out_dir, f"{stem}_cs")
     print("wrote", os.path.join(out_dir, f"{stem}_cs_viewer.html"), flush=True)
     return r

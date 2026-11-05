@@ -39,6 +39,7 @@ class Method:
     label: str
     detect: Callable
     schema: list = field(default_factory=list)
+    needs_stack: bool = False           # detect() also wants the full frame stack (temporal)
 
 
 REGISTRY: "dict[str, Method]" = {}
@@ -215,6 +216,42 @@ register(Method(
                   help="used when threshold = percentile"),
         ParamSpec("min_area_px", "Min area", "int", 8, 1, unit="px", group="Shape rules"),
     ] + _SHAPE_RULE_SPECS,
+))
+
+
+# --------------------------------------------------------------------------- #
+# Method 4: temporal-evidence (re-engages the frame stack; §2 of the v0.2.0 brief)
+# --------------------------------------------------------------------------- #
+
+def _detect_temporal(final, tissue, stack=None, **p):
+    from .temporal import temporal_evidence
+    if stack is None:
+        raise ValueError("temporal-evidence needs the frame stack")
+    return temporal_evidence(stack, tissue, smooth=p["smooth"],
+                             max_transition=p["max_transition"], rise_frac=p["rise_frac"],
+                             min_jump_frac=p["min_jump_frac"],
+                             min_confidence=p["min_confidence"],
+                             baseline_pct=p["baseline_pct"])
+
+
+register(Method(
+    "temporal-evidence", "Temporal evidence (abrupt 1-2 frame fill; confidence)",
+    _detect_temporal,
+    needs_stack=True,
+    schema=[
+        ParamSpec("um_per_px", "Pixel size", "float", 2.5, 0.001, unit="µm/px", group="General"),
+        ParamSpec("smooth", "Temporal smoothing", "int", 3, 1, 15, unit="frames",
+                  group="General", help="rolling mean before differencing"),
+        ParamSpec("max_transition", "Max transition", "int", 2, 1, 5, unit="frames",
+                  group="Temporal", help="a fill may span at most this many frames"),
+        ParamSpec("rise_frac", "Onset rise fraction", "float", 0.5, 0.0, 1.0,
+                  group="Temporal", help="pixel onset = first crossing of this fraction of its rise"),
+        ParamSpec("min_jump_frac", "Min jump fraction", "float", 0.25, 0.0, 1.0,
+                  group="Temporal", help="step must be >= this fraction of the pixel's full rise"),
+        ParamSpec("min_confidence", "Min confidence", "float", 0.15, 0.0, 1.0,
+                  group="Threshold", help="keep candidates at/above this (permissive = high recall)"),
+        ParamSpec("baseline_pct", "Baseline percentile", "int", 20, 0, 100, group="Temporal"),
+    ],
 ))
 
 

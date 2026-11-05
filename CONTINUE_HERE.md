@@ -2,6 +2,52 @@
 
 Pick-up note for the next session. Read this first, then `DESIGN_SPEC.md`.
 
+## 2026-11-05 — v0.3.0: EXPERT v0.2.0 BRIEF IMPLEMENTED (read this box first)
+
+The expert returned a 7-item development brief (`../CaviDetect_v0.2.0_compact_development_spec.md`).
+I decomposed it into 8 increments (roadmap: `docs/superpowers/specs/2026-11-05-cavidetect-v0.2.0-roadmap.md`)
+and built them on branch `feature/v0.2.0-build`, tagged **`v0.3.0`**. All headless/algorithmic
+work is unit-tested on the VM; the HTML UIs need a desktop browser to validate (VM has no display).
+
+**Audit finding:** there was NO ML/training code in the repo (grep clean). The `annotated/`
+masks were single-frame hand paints, never used at inference. So the ML increment starts from zero.
+
+**What shipped (all additive; `colour-frangi` stays byte-identical, regression-pinned):**
+- **§1 Diagnostics** (`diagnostics.py`): `save_stage_montage` dumps every pipeline stage
+  (tissue / brightness / Frangi / seed / accepted) as one PNG; per-run so recall loss is visible.
+- **§2 Temporal evidence** (`temporal.py`, new method `temporal-evidence`): re-engages the
+  FRAME STACK (the old method read only the averaged final frame). Scores each pixel on 1-/2-frame
+  positive differences, step-vs-gradual, persistence, confidence; **max 2-frame transition**;
+  tolerant of later drift. This is the recall fix. `Method.needs_stack` added so `measure` passes
+  the stack; methods may return their own `onset`/`confidence`.
+- **§3 Lightweight ML** (`ml.py`, sklearn optional → degrades to baseline): deterministic features
+  (brightness, jump1/2, step_score, ridge, local_std, persistence) + logistic/forest; `combine()`
+  blends ML prob with evidence; `leave_one_plant_out` enforces split-by-plant (n=3). Needs real
+  training on the Mac (sklearn in `extra`; joblib added).
+- **§4 Anatomy** (`anatomy.py`): `segment_anatomy` → thallus/lumen/scale/tape/background/unknown
+  layered masks; `refine_accepted` drops tape, keeps lumen-through-scale.
+- **§5 Multi-frame annotator** (`outputs.save_multiframe_annotator`): frame slider, add/erase,
+  category labels, per-stroke undo, exports JSON with frame id + label + **original-res coords** +
+  source version (the training-queue payload). Helper `prepare_annotator_frames` unit-tested.
+- **§6 Confidence UI** (`outputs.save_confidence_viewer`): threshold slider over the cached
+  confidence map; accepted/uncertain/rejected; live %; "not a statistical CI". Written by `run()`
+  whenever the method yields confidence (i.e. temporal-evidence).
+- **§7 Outputs**: `save_event_tiffs` (per-frame + cumulative binary TIFF, **streamed** so full-res
+  400-frame runs don't allocate GBs), `build/write_onset_table` (per-region onset/area/centroid/
+  confidence/transition/ambiguous), `save_event_lut` (onset-time coloured overlay), `write_run_metadata`
+  (calibration + 15-s interval + settings + version). `run()` writes them all; CLI flags
+  `--frame-interval`, `--no-tiffs`, `--no-diagnostics`.
+- **§8 Shrinkage companion: DEFERRED** (explicitly optional + non-blocking in the brief; lives in a
+  separate repo `thallus_shrinkage` not present here). Next session.
+
+**STILL TO DO on the Mac (VM can't):** (1) run each method on real `data/cavi*` at full res and
+eyeball the diagnostic montage + confidence viewer + multi-frame annotator in a browser; (2) set the
+collaborator's REAL µm/px; (3) train the §3 model LOPO on the expert masks and check recall vs v0.2.0;
+(4) build §8 shrinkage. **VM was under load avg ~9 this session → tests ran 2–7 min each; that is
+environment, not the code.**
+
+---
+
 ## 2026-11-03 — WHERE THINGS STAND RIGHT NOW (read this box first)
 
 - **Selectable detection methods SHIPPED.** Merged to `main` and tagged **`v0.2.0`** (pushed).

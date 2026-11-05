@@ -393,6 +393,353 @@ setMode('add'); draw();
 """
 
 
+def save_event_tiffs(onset, shape, n_frames: int, out_dir: str, stem: str,
+                     cumulative: bool = True, compress: bool = True) -> dict:
+    """Per-frame binary TIFF of *newly* detected pixels, and (optionally) the cumulative
+    binary TIFF (v0.2.0 brief §7; shipped early as a diagnostic in §1).
+
+    ``onset`` is the per-pixel onset-frame map (-1 where not embolised), ``shape`` the
+    accepted mask. Frame ``t`` of the per-frame stack holds pixels whose onset == t; frame
+    ``t`` of the cumulative stack holds pixels with 0 <= onset <= t. Both are ``uint8``
+    {0,255}. Deflate-compressed by default because a full-res 400-frame stack is large —
+    the masks are sparse so compression is very effective.
+
+    Returns the written paths. The two stacks are exactly consistent by construction: the
+    cumulative stack is the running OR of the per-frame stack.
+    """
+    import tifffile
+    onset = np.asarray(onset)
+    shape = np.asarray(shape, dtype=bool)
+    Y, X = shape.shape
+    # zlib-compressed: the masks are sparse so the on-disk size is small even though the
+    # in-memory (T,Y,X) uint8 array is allocated (~1 byte/px; halve dims with --bin for
+    # a big full-res run on a memory-tight machine).
+    kw = {"compression": "zlib"} if compress else {}
+    valid = shape & (onset >= 0) & (onset < n_frames)
+    ys, xs = np.nonzero(valid)
+
+    per = np.zeros((n_frames, Y, X), np.uint8)
+    per[onset[valid], ys, xs] = 255
+    per_path = os.path.join(out_dir, f"{stem}_events_per_frame.tif")
+    tifffile.imwrite(per_path, per, **kw)
+    out = {"per_frame": per_path}
+
+    if cumulative:
+        cum = (np.cumsum(per.astype(bool), axis=0) > 0).astype(np.uint8) * 255
+        cum_path = os.path.join(out_dir, f"{stem}_events_cumulative.tif")
+        tifffile.imwrite(cum_path, cum, **kw)
+        out["cumulative"] = cum_path
+    return out
+
+
+def build_onset_table(onset, shape, confidence=None, transition=None,
+                      scale_um2: float = 1.0, frame_interval_s: float | None = None):
+    """One row per connected event region (v0.2.0 brief §7): the onset-frame marking of a
+    complete region, with its area, location, confidence and transition ambiguity.
+
+    A region is a connected component of the accepted ``shape`` mask. Its representative
+    ``onset_frame`` is the median of its pixels' onsets; ``onset_spread`` (max-min) and the
+    ``ambiguous`` flag expose where the fill is not clean within the permitted transition.
+    Returns a ``pandas.DataFrame`` sorted by onset.
+    """
+    from scipy.ndimage import label
+    from skimage.measure import regionprops
+    onset = np.asarray(onset)
+    shape = np.asarray(shape, dtype=bool)
+    lbl, n = label(shape)
+    rows = []
+    for p in regionprops(lbl):
+        coords = tuple(p.coords.T)
+        ons = onset[coords]
+        ons = ons[ons >= 0]
+        if ons.size == 0:
+            continue
+        onset_med = int(np.median(ons))
+        spread = int(ons.max() - ons.min())
+        tr = int(np.max(transition[coords])) if transition is not None else spread + 1
+        row = {
+            "event_id": int(p.label),
+            "onset_frame": onset_med,
+            "onset_frame_min": int(ons.min()),
+            "onset_frame_max": int(ons.max()),
+            "onset_spread": spread,
+            "area_px": int(p.area),
+            "area_um2": float(p.area * scale_um2),
+            "centroid_y": float(p.centroid[0]),
+            "centroid_x": float(p.centroid[1]),
+            "transition_frames": tr,
+            "ambiguous": bool(spread > max(tr, 1)),
+        }
+        if confidence is not None:
+            row["mean_confidence"] = float(np.asarray(confidence)[coords].mean())
+        if frame_interval_s is not None:
+            row["onset_time_s"] = onset_med * float(frame_interval_s)
+        rows.append(row)
+    df = pd.DataFrame(rows).sort_values("onset_frame").reset_index(drop=True) if rows \
+        else pd.DataFrame(columns=["event_id", "onset_frame", "area_px"])
+    return df
+
+
+def write_onset_table(onset, shape, out_dir: str, stem: str, confidence=None,
+                      transition=None, scale_um2: float = 1.0,
+                      frame_interval_s: float | None = None) -> str:
+    df = build_onset_table(onset, shape, confidence, transition, scale_um2, frame_interval_s)
+    path = os.path.join(out_dir, f"{stem}_onset_table.csv")
+    df.to_csv(path, index=False)
+    return path
+
+
+def save_event_lut(onset, shape, final, out_dir: str, stem: str,
+                   n_frames: int | None = None) -> str:
+    """Event-time coloured overlay (LUT): each accepted pixel coloured by its onset frame
+    over the grey final frame, with a colourbar (v0.2.0 brief §7)."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    onset = np.asarray(onset, float)
+    shape = np.asarray(shape, dtype=bool)
+    T = n_frames if n_frames is not None else (int(onset[shape].max()) + 1 if shape.any() else 1)
+    vmin, vmax = np.percentile(final, [2, 99])
+    whenmap = np.where(shape & (onset >= 0), onset, np.nan)
+    fig, ax = plt.subplots(figsize=(7, 6))
+    ax.imshow(final, cmap="gray", vmin=vmin, vmax=vmax)
+    m = ax.imshow(whenmap, cmap="turbo", vmin=0, vmax=max(T - 1, 1), alpha=0.9)
+    ax.set_title(f"{stem} — event onset time"); ax.axis("off")
+    plt.colorbar(m, ax=ax, fraction=0.046, label="onset frame")
+    plt.tight_layout()
+    path = os.path.join(out_dir, f"{stem}_event_lut.png")
+    plt.savefig(path, dpi=100); plt.close()
+    return path
+
+
+def write_run_metadata(out_dir: str, stem: str, meta: dict) -> str:
+    """Full provenance for a run (v0.2.0 brief §7): calibration, frame interval, method,
+    resolved settings, thresholds, model/version. A superset of the older ``_cs_params.json``."""
+    path = os.path.join(out_dir, f"{stem}_metadata.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2, default=str)
+    return path
+
+
+def confidence_to_bytes(confidence):
+    """Quantise a 0..1 confidence map to uint8 0..255 for compact embedding in the viewer."""
+    c = np.clip(np.asarray(confidence, np.float32), 0, 1)
+    return (c * 255).round().astype(np.uint8)
+
+
+def save_confidence_viewer(final, confidence, out_dir: str, stem: str, max_px: int = 820,
+                           tissue=None) -> str:
+    """Interactive confidence-threshold viewer (v0.2.0 brief §6).
+
+    Drag a slider: pixels with confidence >= threshold show **accepted** (red); a band just
+    below shows **uncertain** (amber); the rest are **rejected**. The embolised-% readout
+    updates live from the cached per-pixel confidence — no recompute, no server. The score
+    is a ranking, **not** a statistical confidence interval (labelled as such in the UI).
+    """
+    import io as _io, base64, json as _json
+    from PIL import Image
+    final = np.asarray(final, np.float32)
+    Y, X = final.shape
+    lo, hi = np.percentile(final, [2, 99]); rng = max(hi - lo, 1e-3)
+    g = np.clip((final - lo) / rng, 0, 1)
+    scale = min(1.0, max_px / max(Y, X))
+    newsize = (max(1, int(X * scale)), max(1, int(Y * scale)))
+
+    cb = confidence_to_bytes(confidence)
+    if tissue is not None:
+        cb = np.where(np.asarray(tissue, bool), cb, 0).astype(np.uint8)
+    # downscale the confidence map alongside the image so indices line up
+    gim = Image.fromarray((g * 255).astype(np.uint8))
+    cim = Image.fromarray(cb)
+    if scale < 1.0:
+        gim = gim.resize(newsize, Image.BILINEAR)
+        cim = cim.resize(newsize, Image.NEAREST)
+    gb = np.asarray(gim, np.uint8)
+    conf_small = np.asarray(cim, np.uint8)
+    W2, H2 = newsize
+    n_tissue = int((conf_small > 0).sum())
+
+    html = (_CONF_HTML
+            .replace("__TITLE__", f"{stem} — confidence threshold")
+            .replace("__W__", str(W2)).replace("__H__", str(H2))
+            .replace("__NTIS__", str(max(n_tissue, 1)))
+            .replace("__GREY__", base64.b64encode(gb.tobytes()).decode())
+            .replace("__CONF__", base64.b64encode(conf_small.tobytes()).decode()))
+    path = os.path.join(out_dir, f"{stem}_confidence.html")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(html)
+    return path
+
+
+_CONF_HTML = """<!doctype html><html><head><meta charset="utf-8"><title>__TITLE__</title>
+<style>
+ body{background:#111;color:#eee;font-family:system-ui,sans-serif;margin:0;padding:14px}
+ h2{margin:0 0 8px;font-size:16px}
+ #wrap{position:relative;display:inline-block;border:1px solid #333}
+ canvas{display:block;max-width:100%}
+ .controls{margin-top:10px;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+ label{font-size:13px;color:#bcd}
+ #read{font-variant-numeric:tabular-nums;color:#9cf}
+ .key span{display:inline-block;width:11px;height:11px;margin:0 3px -1px 10px;border:1px solid #555}
+</style></head><body>
+<h2>__TITLE__ <span style="font-size:12px;color:#9ab">— drag to set the accept threshold. Score is a ranking, not a statistical confidence interval.</span></h2>
+<div id="wrap"><canvas id="c"></canvas></div>
+<div class="controls">
+ <label>Accept ≥ <input id="thr" type="range" min="0" max="255" value="128"> <span id="thrv"></span></label>
+ <label>Uncertain band <input id="band" type="range" min="0" max="80" value="25"> <span id="bandv"></span></label>
+ <span class="key">key:<span style="background:#e7301e"></span>accepted<span style="background:#e8a200"></span>uncertain</span>
+ <span id="read"></span>
+</div>
+<script>
+const W=__W__,H=__H__,NTIS=__NTIS__;
+function dec(s){const b=atob(s),a=new Uint8Array(b.length);for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a;}
+const GREY=dec("__GREY__"), CONF=dec("__CONF__");
+const c=document.getElementById('c');c.width=W;c.height=H;
+const ctx=c.getContext('2d'),img=ctx.createImageData(W,H);
+const thr=document.getElementById('thr'),band=document.getElementById('band'),
+      thrv=document.getElementById('thrv'),bandv=document.getElementById('bandv'),read=document.getElementById('read');
+function draw(){
+ const t=+thr.value,b=+band.value; thrv.textContent=(t/255).toFixed(2); bandv.textContent=(b/255).toFixed(2);
+ let acc=0;
+ for(let i=0;i<W*H;i++){
+   const gg=GREY[i],cf=CONF[i];let r=gg,g=gg,bl=gg;
+   if(cf>=t){r=Math.min(255,gg*0.25+200);g=gg*0.25;bl=gg*0.25;acc++;}
+   else if(cf>=t-b && cf>0){r=Math.min(255,gg*0.3+180);g=Math.min(255,gg*0.3+120);bl=gg*0.3;}
+   const j=i*4;img.data[j]=r;img.data[j+1]=g;img.data[j+2]=bl;img.data[j+3]=255;
+ }
+ ctx.putImageData(img,0,0);
+ read.textContent='accepted '+(100*acc/NTIS).toFixed(1)+'% of tissue';
+}
+thr.oninput=draw;band.oninput=draw;draw();
+</script></body></html>
+"""
+
+
+def prepare_annotator_frames(stack, n_frames: int = 12, max_px: int = 1000):
+    """Pick ~``n_frames`` evenly-spaced frames and return (indices, base64 JPEGs, scale).
+
+    ``scale`` is display/original so the UI can export masks in **original-resolution**
+    coordinates. Shared, testable data-prep for the multi-frame annotator (brief §5)."""
+    import io as _io, base64
+    from PIL import Image
+    stack = np.asarray(stack)
+    T, Y, X = stack.shape
+    idx = sorted(set(np.linspace(0, T - 1, min(n_frames, T)).astype(int).tolist()))
+    scale = min(1.0, max_px / max(Y, X))
+    newsize = (max(1, int(X * scale)), max(1, int(Y * scale)))
+    lo, hi = np.percentile(stack, [2, 99]); rng = max(hi - lo, 1e-3)
+    imgs = []
+    for t in idx:
+        g = np.clip((stack[t].astype(np.float32) - lo) / rng, 0, 1)
+        im = Image.fromarray((g * 255).astype(np.uint8))
+        if scale < 1.0:
+            im = im.resize(newsize, Image.BILINEAR)
+        b = _io.BytesIO(); im.save(b, format="JPEG", quality=75)
+        imgs.append("data:image/jpeg;base64," + base64.b64encode(b.getvalue()).decode())
+    return idx, imgs, scale
+
+
+def save_multiframe_annotator(stack, out_dir: str, stem: str,
+                              categories=("lumen", "inter-rhizoid drying", "scale", "tape",
+                                          "unknown"),
+                              version: str = "?", n_frames: int = 12, max_px: int = 1000) -> str:
+    """Multi-frame annotation tool (brief §5): frame slider, add/erase brush, per-action undo,
+    labelled categories. Exports a JSON of strokes with **frame id, label, original-resolution
+    coordinates and source version** — the versioned training-queue payload for the ML step.
+
+    Live UI is exercised on a desktop (the VM has no browser display); the data-prep
+    (:func:`prepare_annotator_frames`) and the export schema are unit-tested."""
+    import json as _json
+    idx, imgs, scale = prepare_annotator_frames(stack, n_frames, max_px)
+    orig_per_disp = 1.0 / scale if scale > 0 else 1.0
+    html = (_MULTI_ANN_HTML
+            .replace("__TITLE__", f"{stem} — multi-frame annotator")
+            .replace("__STEM__", stem)
+            .replace("__VERSION__", version)
+            .replace("__IMGS__", _json.dumps(imgs))
+            .replace("__IDX__", _json.dumps(idx))
+            .replace("__CATS__", _json.dumps(list(categories)))
+            .replace("__ORIGPERDISP__", repr(float(orig_per_disp))))
+    path = os.path.join(out_dir, f"{stem}_multiframe_annotate.html")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(html)
+    return path
+
+
+_MULTI_ANN_HTML = """<!doctype html><html><head><meta charset="utf-8"><title>__TITLE__</title>
+<style>
+ body{background:#111;color:#eee;font-family:system-ui,sans-serif;margin:0;padding:12px}
+ h2{margin:0 0 8px;font-size:16px}
+ #wrap{position:relative;display:inline-block;border:1px solid #333}
+ #base,#ov{position:absolute;left:0;top:0;max-width:100%}
+ #ov{cursor:crosshair}
+ .controls{margin-top:10px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+ label{font-size:13px;color:#bcd}
+ button{padding:6px 12px;background:#243;color:#eee;border:1px solid #365;border-radius:4px;cursor:pointer}
+ button.on{background:#2a6;border-color:#4c9}
+ select{padding:5px;background:#182;color:#eee;border:1px solid #365;border-radius:4px}
+ #read{font-variant-numeric:tabular-nums;color:#9cf}
+</style></head><body>
+<h2>__TITLE__ <span style="font-size:12px;color:#9ab">— pick a frame, choose a label, paint. Undo per stroke. Export JSON when done.</span></h2>
+<div id="wrap"><img id="base"><canvas id="ov"></canvas></div>
+<div class="controls">
+ <label>Frame <input id="fr" type="range" min="0" value="0"> <span id="frv"></span></label>
+ <label>Label <select id="cat"></select></label>
+ <button id="mAdd" class="on">Add</button><button id="mErase">Erase</button>
+ <label>Brush <input id="bsz" type="range" min="2" max="60" value="16"></label>
+ <button id="undo">Undo</button><button id="clearf">Clear frame</button>
+ <button id="exp">Export JSON</button>
+ <span id="read"></span>
+</div>
+<script>
+const IMGS=__IMGS__, IDX=__IDX__, CATS=__CATS__, ORIGPERDISP=__ORIGPERDISP__,
+      STEM="__STEM__", VERSION="__VERSION__";
+const base=document.getElementById('base'),ov=document.getElementById('ov'),
+      fr=document.getElementById('fr'),frv=document.getElementById('frv'),
+      cat=document.getElementById('cat'),bsz=document.getElementById('bsz'),read=document.getElementById('read');
+CATS.forEach(c=>{const o=document.createElement('option');o.value=o.textContent=c;cat.appendChild(o);});
+fr.max=IMGS.length-1;
+let mode='add', painting=false;
+// strokes[frameIndex] = array of {label, mode, pts:[[x,y],...], r}
+const strokes=IMGS.map(()=>[]);
+let cur=null;
+function setMode(m){mode=m;document.getElementById('mAdd').classList.toggle('on',m==='add');
+ document.getElementById('mErase').classList.toggle('on',m==='erase');}
+document.getElementById('mAdd').onclick=()=>setMode('add');
+document.getElementById('mErase').onclick=()=>setMode('erase');
+function fi(){return +fr.value;}
+function redraw(){
+ const ctx=ov.getContext('2d');ctx.clearRect(0,0,ov.width,ov.height);
+ for(const s of strokes[fi()]){
+   ctx.fillStyle = s.mode==='erase' ? 'rgba(20,20,20,0.9)' : 'rgba(231,48,30,0.5)';
+   for(const p of s.pts){ctx.beginPath();ctx.arc(p[0],p[1],s.r,0,7);ctx.fill();}
+ }
+ let n=0; strokes.forEach(fs=>n+=fs.length);
+ read.textContent=IMGS.length+' frames · '+n+' strokes total';
+}
+function show(){const i=fi();base.src=IMGS[i];frv.textContent='t='+IDX[i];
+ base.onload=()=>{ov.width=base.width;ov.height=base.height;redraw();};
+ if(base.complete){ov.width=base.width;ov.height=base.height;redraw();}}
+fr.oninput=show;
+function pos(ev){const r=ov.getBoundingClientRect();return [(ev.clientX-r.left)*ov.width/r.width,(ev.clientY-r.top)*ov.height/r.height];}
+ov.onmousedown=e=>{painting=true;cur={label:cat.value,mode:mode,r:+bsz.value,pts:[pos(e)]};strokes[fi()].push(cur);redraw();};
+ov.onmousemove=e=>{if(painting&&cur){cur.pts.push(pos(e));redraw();}};
+window.onmouseup=()=>{painting=false;cur=null;};
+document.getElementById('undo').onclick=()=>{strokes[fi()].pop();redraw();};
+document.getElementById('clearf').onclick=()=>{strokes[fi()]=[];redraw();};
+document.getElementById('exp').onclick=()=>{
+ const out={stem:STEM,source_version:VERSION,orig_per_disp:ORIGPERDISP,
+   frames:IDX.map((t,i)=>({frame_id:t,strokes:strokes[i].map(s=>({label:s.label,mode:s.mode,
+     radius_orig:s.r*ORIGPERDISP, points_orig:s.pts.map(p=>[Math.round(p[0]*ORIGPERDISP),Math.round(p[1]*ORIGPERDISP)])}))}))
+   .filter(f=>f.strokes.length)};
+ const a=document.createElement('a');a.download=STEM+'_annotations.json';
+ a.href='data:application/json,'+encodeURIComponent(JSON.stringify(out,null,1));a.click();
+};
+show();
+</script></body></html>
+"""
+
+
 def write_manifest(out_dir: str, stem: str, manifest: dict) -> str:
     path = os.path.join(out_dir, f"{stem}_manifest.json")
     with open(path, "w", encoding="utf-8") as f:
