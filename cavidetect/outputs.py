@@ -519,6 +519,40 @@ def save_event_lut(onset, shape, final, out_dir: str, stem: str,
     return path
 
 
+def save_evidence_maps(final, evidence: dict, out_dir: str, stem: str, dpi: int = 100) -> dict:
+    """Export the fused detector's evidence maps (v0.3.1 hybrid brief, Outputs section).
+
+    ``evidence`` maps a name -> 2-D array. Scalar maps (ridge response, temporal
+    confidence, combined confidence) are drawn with a heat colourmap over the grey final
+    frame; boolean maps (the artifact/exclusion mask) are drawn as a red overlay. Each is
+    written as ``<stem>_<name>.png`` and keeps image/pixel correspondence with the frames.
+    Returns the written paths. Only called for methods that provide an ``evidence`` dict
+    (hybrid-ridge-temporal); other methods are unaffected.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    final = np.asarray(final, np.float32)
+    vmin, vmax = np.percentile(final, [2, 99])
+    paths = {}
+    for name, arr in (evidence or {}).items():
+        arr = np.asarray(arr)
+        fig, ax = plt.subplots(figsize=(7, 6))
+        ax.imshow(final, cmap="gray", vmin=vmin, vmax=vmax)
+        if arr.dtype == bool:
+            ov = np.zeros((*arr.shape, 4)); ov[arr] = [1, 0.15, 0.15, 0.6]
+            ax.imshow(ov)
+        else:
+            m = ax.imshow(np.where(arr > 0, arr, np.nan), cmap="magma", alpha=0.85)
+            plt.colorbar(m, ax=ax, fraction=0.046, label=name)
+        ax.set_title(f"{stem} — {name}"); ax.axis("off")
+        plt.tight_layout()
+        path = os.path.join(out_dir, f"{stem}_{name}.png")
+        plt.savefig(path, dpi=dpi); plt.close()
+        paths[name] = path
+    return paths
+
+
 def write_run_metadata(out_dir: str, stem: str, meta: dict) -> str:
     """Full provenance for a run (v0.2.0 brief §7): calibration, frame interval, method,
     resolved settings, thresholds, model/version. A superset of the older ``_cs_params.json``."""

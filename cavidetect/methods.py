@@ -284,3 +284,89 @@ register(Method(
         ParamSpec("border_px", "Border distance", "int", 10, 0, unit="px", group="Shape rules"),
     ],
 ))
+
+
+# --------------------------------------------------------------------------- #
+# Method 5: hybrid-ridge-temporal (fuses ridge + temporal; the v0.3.1 brief)
+# --------------------------------------------------------------------------- #
+
+def _detect_hybrid(final, tissue, stack=None, **p):
+    from .hybrid import hybrid_detect
+    if stack is None:
+        raise ValueError("hybrid-ridge-temporal needs the frame stack")
+    return hybrid_detect(final, tissue, stack=stack, **p)
+
+
+register(Method(
+    "hybrid-ridge-temporal",
+    "Hybrid ridge + temporal (fused recall, abrupt-change gated)",
+    _detect_hybrid,
+    needs_stack=True,
+    schema=[
+        ParamSpec("um_per_px", "Pixel size", "float", 2.5, 0.001, unit="µm/px", group="General"),
+        ParamSpec("smooth", "Temporal smoothing", "int", 3, 1, 15, unit="frames",
+                  group="Temporal", help="rolling mean before differencing"),
+        ParamSpec("max_transition", "Max transition", "int", 2, 1, 5, unit="frames",
+                  group="Temporal", help="a cavitation fill may span at most this many frames"),
+        ParamSpec("baseline_pct", "Baseline percentile", "int", 20, 0, 100, group="Temporal"),
+        ParamSpec("min_jump_frac", "Min jump fraction", "float", 0.20, 0.0, 1.0,
+                  group="Temporal", help="step must be >= this fraction of the pixel's full rise"),
+        ParamSpec("snr_min", "Min jump SNR", "float", 4.0, 0.0, 50.0, group="Temporal",
+                  help="jump must exceed this multiple of the pixel's temporal noise (noise-aware)"),
+        ParamSpec("weak_snr_min", "Weak jump SNR (growth)", "float", 2.0, 0.0, 50.0,
+                  group="Temporal", help="lower SNR allowed only when growing a confirmed tube"),
+        ParamSpec("abs_jump_frac", "Min absolute jump", "float", 0.15, 0.0, 1.0,
+                  group="Temporal",
+                  help="jump/rise must be >= this fraction of the scene brightness span (rejects noise on bright pixels)"),
+        ParamSpec("bright_hi_pct", "Seed percentile", "int", 70, 0, 100, group="Ridge"),
+        ParamSpec("bright_lo_pct", "Grow percentile", "int", 45, 0, 100, group="Ridge"),
+        ParamSpec("seed_ridge", "Seed tubeness", "float", 0.08, 0.0, 1.0, group="Ridge"),
+        ParamSpec("grow_ridge", "Grow tubeness", "float", 0.02, 0.0, 1.0, group="Ridge"),
+        ParamSpec("scale_area", "Scale reject area", "int", 600, 1, unit="px", group="Ridge"),
+        ParamSpec("scale_ecc", "Scale reject ecc", "float", 0.85, 0.0, 1.0, group="Ridge"),
+        ParamSpec("border_px", "Border distance", "int", 10, 0, unit="px", group="Ridge"),
+        ParamSpec("w_temporal", "Weight: temporal", "float", 0.5, 0.0, 1.0, group="Fusion"),
+        ParamSpec("w_ridge", "Weight: ridge", "float", 0.3, 0.0, 1.0, group="Fusion"),
+        ParamSpec("w_persist", "Weight: persistence", "float", 0.2, 0.0, 1.0, group="Fusion"),
+        ParamSpec("use_anatomy", "Exclude gradual scales/tape", "bool", True, group="Fusion",
+                  help="drop gradual scale/tape artifacts; lumen-under-scale is kept"),
+        ParamSpec("min_confidence", "Min confidence", "float", 0.15, 0.0, 1.0, group="Threshold",
+                  help="accept candidates at/above this; re-thresholdable in the confidence viewer"),
+    ],
+))
+
+
+# --------------------------------------------------------------------------- #
+# Method 6: ridge-temporal-intersection (diagnostic: simple AND of the legacy masks)
+# --------------------------------------------------------------------------- #
+
+def _detect_intersection(final, tissue, stack=None, **p):
+    from .hybrid import intersection_detect
+    if stack is None:
+        raise ValueError("ridge-temporal-intersection needs the frame stack")
+    return intersection_detect(final, tissue, stack=stack, **p)
+
+
+register(Method(
+    "ridge-temporal-intersection",
+    "Ridge AND temporal intersection (diagnostic baseline)",
+    _detect_intersection,
+    needs_stack=True,
+    schema=[
+        ParamSpec("um_per_px", "Pixel size", "float", 2.5, 0.001, unit="µm/px", group="General"),
+        ParamSpec("smooth", "Temporal smoothing", "int", 3, 1, 15, unit="frames", group="Temporal"),
+        ParamSpec("max_transition", "Max transition", "int", 2, 1, 5, unit="frames", group="Temporal"),
+        ParamSpec("baseline_pct", "Baseline percentile", "int", 20, 0, 100, group="Temporal"),
+        ParamSpec("min_jump_frac", "Min jump fraction", "float", 0.25, 0.0, 1.0, group="Temporal"),
+        ParamSpec("rise_frac", "Onset rise fraction", "float", 0.5, 0.0, 1.0, group="Temporal"),
+        ParamSpec("min_confidence", "Min confidence", "float", 0.15, 0.0, 1.0, group="Threshold"),
+        ParamSpec("bright_hi_pct", "Seed percentile", "int", 70, 0, 100, group="Ridge"),
+        ParamSpec("bright_lo_pct", "Grow percentile", "int", 45, 0, 100, group="Ridge"),
+        ParamSpec("seed_ridge", "Seed tubeness", "float", 0.08, 0.0, 1.0, group="Ridge"),
+        ParamSpec("grow_ridge", "Grow tubeness", "float", 0.02, 0.0, 1.0, group="Ridge"),
+        ParamSpec("min_area", "Min area", "int", 8, 1, unit="px", group="Ridge"),
+        ParamSpec("scale_area", "Scale reject area", "int", 600, 1, unit="px", group="Ridge"),
+        ParamSpec("scale_ecc", "Scale reject ecc", "float", 0.85, 0.0, 1.0, group="Ridge"),
+        ParamSpec("border_px", "Border distance", "int", 10, 0, unit="px", group="Ridge"),
+    ],
+))

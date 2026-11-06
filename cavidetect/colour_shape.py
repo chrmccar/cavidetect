@@ -138,6 +138,41 @@ def ridge_map(final, tissue, sigmas=(0.5, 1, 1.5, 2, 3, 4)):
     return v / (v[tissue].max() + 1e-9)
 
 
+def ridge_evidence(final, tissue, bright_hi_pct=70, bright_lo_pct=45,
+                   seed_ridge=0.08, grow_ridge=0.02, sigmas=(0.5, 1, 1.5, 2, 3, 4)):
+    """Continuous ridge (anatomical) evidence, with its intermediate masks exposed.
+
+    This is the pre-acceptance half of the ridge-hysteresis detector, split out so the
+    hybrid detector can *fuse* the continuous ridge scores and seed/grow masks with temporal
+    evidence instead of consuming only the final binary mask (v0.3.1 hybrid brief, Step 3:
+    "Retain continuous ridge scores rather than only the final binary accepted mask").
+
+    Returns a dict:
+
+    * ``ridge``     — normalised Frangi tubeness map (continuous, 0..~1 within tissue).
+    * ``seed``      — bright (>=hi pct) AND strongly tubular: confident embolised centres.
+    * ``grow``      — mildly bright (>=lo pct) AND weakly tubular: faint tube continuations.
+    * ``tubes``     — hysteresis result: ``grow`` components that contain a ``seed``.
+    * ``edge_dist`` — distance (px) into the tissue, for the border/scale test.
+    * ``air_hi`` / ``air_lo`` — the two brightness cuts used.
+
+    No component-size / scale filtering is applied here; callers (``detect_spatial_v2`` and
+    the hybrid) impose their own acceptance so ``detect_spatial_v2`` stays byte-identical.
+    """
+    from scipy.ndimage import label, distance_transform_edt
+    vn = ridge_map(final, tissue, sigmas)
+    air_hi = float(np.percentile(final[tissue], bright_hi_pct))
+    air_lo = float(np.percentile(final[tissue], bright_lo_pct))
+    seed = tissue & (final >= air_hi) & (vn >= seed_ridge)
+    grow = tissue & (final >= air_lo) & (vn >= grow_ridge)
+    lbl, _ = label(grow)                                  # hysteresis grow
+    seeded = set(int(x) for x in np.unique(lbl[seed])) - {0}
+    tubes = np.isin(lbl, list(seeded)) if seeded else np.zeros_like(tissue)
+    edge_dist = distance_transform_edt(tissue)            # px distance into tissue
+    return dict(ridge=vn, seed=seed, grow=grow, tubes=tubes, edge_dist=edge_dist,
+                air_hi=air_hi, air_lo=air_lo)
+
+
 def detect_spatial_v2(final, tissue=None, bright_hi_pct=70, bright_lo_pct=45,
                       seed_ridge=0.08, grow_ridge=0.02, sigmas=(0.5, 1, 1.5, 2, 3, 4),
                       min_area=8, scale_area=600, scale_ecc=0.85,
@@ -153,19 +188,13 @@ def detect_spatial_v2(final, tissue=None, bright_hi_pct=70, bright_lo_pct=45,
        AND not strongly elongated (low eccentricity -> a blob, whereas a thin rhizoid is
        a line with eccentricity ~1 and is kept) AND touches the tissue border.
     """
-    from scipy.ndimage import label, distance_transform_edt
+    from scipy.ndimage import label
     from skimage.measure import regionprops
     if tissue is None:
         tissue = tissue_from_final(final, erode=erode)
-    vn = ridge_map(final, tissue, sigmas)
-    air_hi = float(np.percentile(final[tissue], bright_hi_pct))
-    air_lo = float(np.percentile(final[tissue], bright_lo_pct))
-    seed = tissue & (final >= air_hi) & (vn >= seed_ridge)
-    cand = tissue & (final >= air_lo) & (vn >= grow_ridge)
-    lbl, _ = label(cand)                                  # hysteresis grow
-    seeded = set(int(x) for x in np.unique(lbl[seed])) - {0}
-    tubes = np.isin(lbl, list(seeded)) if seeded else np.zeros_like(tissue)
-    edge_dist = distance_transform_edt(tissue)            # px distance into tissue
+    ev = ridge_evidence(final, tissue, bright_hi_pct, bright_lo_pct,
+                        seed_ridge, grow_ridge, sigmas)
+    vn, tubes, edge_dist = ev["ridge"], ev["tubes"], ev["edge_dist"]
     lbl2, _ = label(tubes); keep = []
     for p in regionprops(lbl2):
         if p.area < min_area:
@@ -177,7 +206,7 @@ def detect_spatial_v2(final, tissue=None, bright_hi_pct=70, bright_lo_pct=45,
         if not is_scale:
             keep.append(p.label)
     shape = np.isin(lbl2, keep)
-    return dict(tissue=tissue, air=air_hi, colour=tissue & (final >= air_lo),
+    return dict(tissue=tissue, air=ev["air_hi"], colour=tissue & (final >= ev["air_lo"]),
                 shape=shape, ridge=vn)
 
 
@@ -218,7 +247,8 @@ def measure(stack, method: str = "colour-frangi", params: dict | None = None,
     return dict(tissue=tissue, final=final, air=d.get("air"), colour=d["colour"], shape=shape,
                 ridge=ridge, onset=onset, cum=cum, frac=frac, tissue_px=int(tissue.sum()),
                 method=method, params=resolved, stages=d.get("stages"),
-                confidence=d.get("confidence"), transition=d.get("transition"))
+                confidence=d.get("confidence"), transition=d.get("transition"),
+                evidence=d.get("evidence"))
 
 
 def run(folder: str, out_dir: str, bin_xy: int = 2, air=None, tail_frac: float = 0.12,
@@ -299,6 +329,9 @@ def run(folder: str, out_dir: str, bin_xy: int = 2, air=None, tail_frac: float =
     if r.get("confidence") is not None:
         cout.save_confidence_viewer(r["final"], r["confidence"], out_dir, f"{stem}_cs",
                                     tissue=r["tissue"])
+    # hybrid brief: export the fused evidence maps (ridge / temporal / combined / artifact)
+    if r.get("evidence"):
+        cout.save_evidence_maps(r["final"], r["evidence"], out_dir, f"{stem}_cs")
     # §7/§1 per-frame + cumulative binary TIFF of newly-detected pixels (streamed, sparse-compressed)
     if write_tiffs:
         cout.save_event_tiffs(r["onset"], r["shape"], T, out_dir, f"{stem}_cs")

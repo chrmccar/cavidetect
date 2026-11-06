@@ -2,6 +2,59 @@
 
 Pick-up note for the next session. Read this first, then `DESIGN_SPEC.md`.
 
+## 2026-11-06 — v0.4.0: HYBRID RIDGE + TEMPORAL DETECTOR (read this box first)
+
+Implements the expert's **CaviDetect v0.3.1 "Hybrid ridge-hysteresis and temporal-evidence
+detector"** brief. Fully additive — both legacy methods are byte-identical and still
+selectable. Design: `docs/superpowers/specs/2026-11-06-hybrid-ridge-temporal-design.md`.
+
+**Two new selectable methods** (registry → appear automatically in CLI `--method` and the GUI
+dropdown; no CLI/GUI code change needed):
+- **`hybrid-ridge-temporal`** (`cavidetect/hybrid.py:hybrid_detect`) — fuses the *continuous*
+  temporal + ridge evidence (not the two binary masks). Every accepted pixel must clear a
+  credible optical transition (noise-aware **SNR** + **absolute** DN magnitude tied to the
+  scene span + a real step fraction of its own rise), so a static bright ridge with no rapid
+  brightening is rejected and noise on already-bright pixels can't score. Ridge-guided growth
+  completes a temporally-confirmed tube to full extent but only across pixels that also show
+  a transition (never fills a drying scale); a strong abrupt event with weak ridge still
+  qualifies (dense-bundle recovery). Gradual scale/tape excluded via `anatomy` but
+  lumen-under-scale kept; the removed pixels are exported as an artifact map. Onset = **start
+  of the strongest jump** (fixes the premature-onset behaviour). One interpretable 0–1
+  `confidence` (NOT calibrated) → the §6 confidence viewer re-thresholds after the run.
+- **`ridge-temporal-intersection`** (`hybrid.py:intersection_detect`) — diagnostic baseline:
+  the naive AND of the two *legacy* final masks (the thing the hybrid must beat).
+
+**Refactor (byte-identical):** `colour_shape.ridge_evidence` was split out of
+`detect_spatial_v2` so the hybrid can reuse the ridge seed/grow/tube maps; v2's mask is
+unchanged and pinned by a test.
+
+**New outputs:** `outputs.save_evidence_maps` writes `<stem>_cs_ridge_response.png`,
+`_temporal_confidence.png`, `_combined_confidence.png`, `_artifact_excluded.png` whenever the
+method yields an `evidence` dict (hybrid only). Everything else (binary TIFFs, event LUT,
+onset table, run metadata, confidence viewer, stage montage) is reused as-is.
+
+**Tests:** `tests/test_hybrid.py` (10) — recovers the abrupt tube, suppresses the gradual
+scale, rejects the static non-transition ridge, keeps an abrupt non-ridge blob, onset at the
+jump, intersection ⊆ both legacy masks, bounded float32 confidence, registry/params, and a
+guard that the `ridge_evidence` refactor left v2 intact. **106 tests pass on the VM** (was 96).
+
+**STILL TO DO on the Mac (VM can't — no full-res stack, no browser):**
+1. Run all four detectors (`ridge-hysteresis`, `temporal-evidence`, `ridge-temporal-intersection`,
+   `hybrid-ridge-temporal`) on the real `data/cavi*` full-res and compare against the expert
+   `annotated/` masks — **recall / FP area / precision / onset accuracy / dense-bundle /
+   under-scale / RAM**, using **held-out plants** (n=3, LOPO) not crops of one plant. This is
+   the brief's acceptance test ("demonstrated against manually reviewed data, not cleaner-looking
+   masks"). The cached eval harness from v0.1.3 (scratchpad) is the starting point.
+2. Eyeball the hybrid evidence maps + confidence viewer in a browser; tune `snr_min`,
+   `abs_jump_frac`, `min_confidence`, fusion weights on the real bundles the expert flagged.
+3. Set the collaborator's REAL µm/px (still the 2.5 fallback).
+4. Smoke-tested end-to-end on the VM at `--bin 4` on `cavi490001` (full `run()` path: evidence
+   maps + confidence viewer + TIFFs) — see the v0.4.0 commit. Full-res timing/RAM is a Mac check.
+
+Run it: `cavidetect colour-shape ../data/cavi490001 --out results_whole/hybrid --bin 1 --method hybrid-ridge-temporal`
+
+---
+
 ## ⭐ NEXT SESSION / TOMORROW (2026-11-06) — start here
 
 State at end of 2026-11-05: shipped **v0.3.0** (expert's 7-item v0.2.0 brief, 8 increments)
