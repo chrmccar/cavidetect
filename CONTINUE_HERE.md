@@ -37,8 +37,9 @@ slope override, `final_from_stack` plain-mean vs per-frame) and `tests/test_meth
 End-to-end `run()` smoke with `shape-filter --params clahe_scope=per-frame` detects the tube
 and writes the full output set.
 
-**NOT committed / tagged / pushed** (awaiting user go-ahead). When shipping: this is additive
-→ a minor tag (e.g. v0.5.0). **Mac-only follow-ups:** run `shape-filter` on real full-res
+**SHIPPED: committed + merged to main + tagged `v0.5.0` + pushed** (commit e826039; CI builds
+the Release on the tag push — verify at github.com/chrmccar/cavidetect/releases/tag/v0.5.0).
+**Mac-only follow-ups:** run `shape-filter` on real full-res
 `data/cavi*` and eyeball vs the expert `annotated/` masks; confirm per-frame CLAHE recall on
 the dense bundles; set the real µm/px. Decision log: user chose faithful-ImageJ reproduction,
 selectable CLAHE scope (default per-frame), lower min-size floor, and **keep colour-frangi
