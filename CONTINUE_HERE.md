@@ -2,6 +2,50 @@
 
 Pick-up note for the next session. Read this first, then `DESIGN_SPEC.md`.
 
+## 2026-11-10 — EXPERT ImageJ WORKFLOW FOLDED IN (CLAHE-faithful `shape-filter`)
+
+The expert described how they actually use the tool: (1) an ImageJ macro that runs
+**CLAHE** ("Enhance Local Contrast") along the rhizoids — block size 127, 256 bins, max
+slope 1.5, the `fast_(less_accurate)` variant — before detection; (2) at the end they
+filter out detected objects smaller than ~0.5 px (i.e. keep almost everything). Their macro
+is saved at the project root: `../CLAHE.ijm.ijm`.
+
+**What changed (all additive; `colour-frangi` stays byte-identical, regression-pinned):**
+- **`preprocess_final.py`:** CLAHE now takes ImageJ-semantic knobs — `clahe_blocksize`
+  (→ skimage `kernel_size`), `clahe_bins` (→ `nbins`), `clahe_maxslope` (→ `clip_limit` via
+  the new `imagej_clahe_clip(maxslope, bins) = maxslope/bins`), with `clahe_clip` as an
+  optional explicit override. The expert runs ImageJ's `fast_(less_accurate)` CLAHE, which is
+  exactly the tiled+interpolated algorithm `skimage.exposure.equalize_adapthist` implements,
+  so this is a faithful analogue (not pixel-identical at tile seams). New
+  `final_from_stack(stack, tail_frac, contrast, **clahe_kw)` builds the dry final frame —
+  plain mean (default, byte-identical) **or** per-frame-CLAHE-then-average (the macro enhances
+  every frame).
+- **`shape-filter` method = the faithful ImageJ flow.** Defaults now reproduce the macro:
+  `contrast=clahe`, blocksize 127 / bins 256 / slope 1.5, `clahe_scope=per-frame`, and
+  `min_area_px=1` (≈ "keep ≥0.5 px"). New params auto-appear in the CLI `--params` schema and
+  the GUI settings panel (registry-driven). Collaborator picks `--method shape-filter`.
+- **`colour_shape.measure`** owns the stack→final reduction: when the method asks for
+  per-frame CLAHE it CLAHEs each tail frame then averages and suppresses the method's own
+  contrast step (CLAHE applied exactly once). The **raw stack** (onset timing +
+  temporal/hybrid detectors) is never CLAHE'd — per-frame CLAHE is non-linear and would
+  corrupt the absolute DN jumps those detectors key on. `clahe_scope=final` enhances only the
+  averaged final frame.
+
+**Tests:** +7 (TDD) in `tests/test_preprocess_final.py` (clip mapping, local-contrast gain,
+slope override, `final_from_stack` plain-mean vs per-frame) and `tests/test_methods.py`
+(macro defaults, measure per-frame-scope plumbing). **113 pass on the VM** (was 106).
+End-to-end `run()` smoke with `shape-filter --params clahe_scope=per-frame` detects the tube
+and writes the full output set.
+
+**NOT committed / tagged / pushed** (awaiting user go-ahead). When shipping: this is additive
+→ a minor tag (e.g. v0.5.0). **Mac-only follow-ups:** run `shape-filter` on real full-res
+`data/cavi*` and eyeball vs the expert `annotated/` masks; confirm per-frame CLAHE recall on
+the dense bundles; set the real µm/px. Decision log: user chose faithful-ImageJ reproduction,
+selectable CLAHE scope (default per-frame), lower min-size floor, and **keep colour-frangi
+untouched**.
+
+---
+
 ## 2026-11-06 — v0.4.0: HYBRID RIDGE + TEMPORAL DETECTOR (read this box first)
 
 Implements the expert's **CaviDetect v0.3.1 "Hybrid ridge-hysteresis and temporal-evidence

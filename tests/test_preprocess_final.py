@@ -45,3 +45,70 @@ def test_preprocess_default_is_identity():
     img = _grey_gradient()
     out = pp.preprocess_final(img)
     assert np.array_equal(out, img)
+
+
+# --- Faithful ImageJ CLAHE (expert's macro: blocksize 127 / 256 bins / slope 1.5) ---
+
+def test_imagej_clahe_clip_maps_maxslope_over_bins():
+    # ImageJ 'Enhance Local Contrast' limits the transfer-function slope; the
+    # per-bin clip as a fraction of the window is maxSlope / bins.
+    assert pp.imagej_clahe_clip(1.5, 256) == 1.5 / 256
+    assert pp.imagej_clahe_clip(3.0, 128) == 3.0 / 128
+
+
+def _faint_local_feature(n=96):
+    """A textured, uneven-illumination field with a low-contrast local patch —
+    the kind of frame CLAHE is meant to pull a faint rhizoid out of."""
+    rng = np.random.default_rng(0)
+    yy, xx = np.mgrid[0:n, 0:n].astype(np.float32)
+    img = 60.0 + 0.6 * xx + 0.3 * yy                 # smooth illumination ramp
+    img += rng.normal(0, 4, (n, n)).astype(np.float32)  # texture for the histogram
+    img[40:56, 40:56] += 10.0                        # faint local feature
+    return img.astype(np.float32)
+
+
+def test_clahe_increases_local_contrast_of_faint_feature():
+    img = _faint_local_feature()
+    patch, bg = (slice(40, 56), slice(40, 56)), (slice(40, 56), slice(0, 16))
+    base = float(img[patch].mean() - img[bg].mean())
+    out = pp.apply_contrast(img, "clahe", clahe_blocksize=32,
+                            clahe_bins=256, clahe_maxslope=3.0)
+    # compare on a common scale: local contrast as a fraction of the frame's span
+    base_n = base / (img.max() - img.min())
+    enh_n = float(out[patch].mean() - out[bg].mean()) / (out.max() - out.min())
+    assert enh_n > base_n                            # the patch stands out more
+
+
+def test_clahe_maxslope_overrides_default_clip():
+    # A higher maximum slope => larger clip => more aggressive equalisation,
+    # so the two settings must not produce identical output.
+    img = _faint_local_feature()
+    mild = pp.apply_contrast(img, "clahe", clahe_blocksize=32, clahe_maxslope=1.1)
+    strong = pp.apply_contrast(img, "clahe", clahe_blocksize=32, clahe_maxslope=4.0)
+    assert not np.allclose(mild, strong)
+
+
+# --- CLAHE scope: build the final frame from the stack (expert enhances every frame) ---
+
+def _tiny_stack(T=6, n=48):
+    rng = np.random.default_rng(0)
+    base = np.full((T, n, n), 100.0, np.float32)
+    base += rng.normal(0, 2, base.shape).astype(np.float32)
+    base[:, 20:28, 20:28] += 10.0       # a faint persistent feature
+    return base
+
+
+def test_final_from_stack_default_is_plain_mean():
+    stack = _tiny_stack()
+    final = pp.final_from_stack(stack, tail_frac=0.5, contrast="none")
+    tail = stack[-max(int(round(stack.shape[0] * 0.5)), 1):].mean(0)
+    assert np.array_equal(final, tail)          # byte-identical to the old reduction
+
+
+def test_final_from_stack_perframe_clahe_differs_from_plain_mean():
+    stack = _tiny_stack()
+    plain = pp.final_from_stack(stack, tail_frac=0.5, contrast="none")
+    enhanced = pp.final_from_stack(stack, tail_frac=0.5, contrast="clahe",
+                                   clahe_blocksize=16, clahe_maxslope=3.0)
+    assert enhanced.shape == plain.shape
+    assert not np.allclose(enhanced, plain)

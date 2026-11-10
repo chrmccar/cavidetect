@@ -221,12 +221,27 @@ def measure(stack, method: str = "colour-frangi", params: dict | None = None,
     returned ``params`` keep the true optical ``um_per_px``.
     """
     from . import methods as M
+    from . import preprocess_final as pp
     T = stack.shape[0]
-    final = stack[-max(int(round(T * tail_frac)), 1):].mean(0)
     resolved = M.resolve_params(method, params or {})
     for_detect = dict(resolved)
     if "um_per_px" in for_detect:
         for_detect["um_per_px"] = resolved["um_per_px"] * bin_xy   # µm per analysis pixel
+    # Build the dry 'final' frame. Default = plain mean of the tail (byte-identical
+    # to the old reduction, so every method is unaffected). If the method asks for
+    # per-frame CLAHE (the expert's ImageJ macro enhances every frame), CLAHE each
+    # tail frame then average, and suppress the method's own contrast step so CLAHE
+    # is applied exactly once. The raw stack (onset timing / temporal detectors) is
+    # never altered.
+    if resolved.get("clahe_scope") == "per-frame" and resolved.get("contrast") == "clahe":
+        final = pp.final_from_stack(stack, tail_frac, contrast="clahe",
+                                    clahe_blocksize=resolved["clahe_blocksize"],
+                                    clahe_bins=resolved["clahe_bins"],
+                                    clahe_maxslope=resolved["clahe_maxslope"],
+                                    clahe_clip=resolved["clahe_clip"])
+        for_detect["contrast"] = "none"
+    else:
+        final = pp.final_from_stack(stack, tail_frac, contrast="none")
     tissue = tissue_from_final(final, erode=2)
     mth = M.get_method(method)
     if mth.needs_stack:                          # temporal methods see the whole stack

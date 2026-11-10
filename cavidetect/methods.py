@@ -178,7 +178,9 @@ def _detect_shape_filter(final, tissue, **p):
     from .shape_filters import filter_regions
     scale = p["um_per_px"]
     pre = preprocess_final(final, contrast=p["contrast"], gamma=p["gamma"],
-                           clahe_clip=p["clahe_clip"], bandpass=p["bandpass"],
+                           clahe_clip=p["clahe_clip"], clahe_blocksize=p["clahe_blocksize"],
+                           clahe_bins=p["clahe_bins"], clahe_maxslope=p["clahe_maxslope"],
+                           bandpass=p["bandpass"],
                            bp_small_um=p["bp_small_um"], bp_large_um=p["bp_large_um"],
                            um_per_analysis_px=scale)
     vals = pre[tissue]
@@ -199,11 +201,23 @@ register(Method(
     schema=[
         ParamSpec("um_per_px", "Pixel size", "float", 2.5, 0.001, unit="µm/px",
                   group="General", help="true optical scale; shape rules use µm"),
-        ParamSpec("contrast", "Contrast", "choice", "none",
-                  choices=("none", "gamma", "clahe"), group="Preprocess"),
+        ParamSpec("contrast", "Contrast", "choice", "clahe",
+                  choices=("none", "gamma", "clahe"), group="Preprocess",
+                  help="default clahe reproduces the expert's ImageJ macro"),
         ParamSpec("gamma", "Gamma", "float", 1.0, 0.1, 5.0, group="Preprocess",
                   help="<1 brightens faint tubes (contrast=gamma)"),
-        ParamSpec("clahe_clip", "CLAHE clip", "float", 0.01, 0.001, 0.1, group="Preprocess"),
+        ParamSpec("clahe_scope", "CLAHE scope", "choice", "per-frame",
+                  choices=("final", "per-frame"), group="Preprocess",
+                  help="per-frame enhances every frame then averages (matches the macro); "
+                       "final enhances only the averaged final frame"),
+        ParamSpec("clahe_blocksize", "CLAHE block size", "int", 127, 1, unit="px",
+                  group="Preprocess", help="ImageJ 'blocksize' (contextual tile)"),
+        ParamSpec("clahe_bins", "CLAHE histogram bins", "int", 256, 2, group="Preprocess"),
+        ParamSpec("clahe_maxslope", "CLAHE max slope", "float", 1.5, 1.0, 10.0,
+                  group="Preprocess", help="ImageJ 'maximum slope'; higher = more contrast"),
+        ParamSpec("clahe_clip", "CLAHE clip override", "float", None, 0.001, 0.5,
+                  group="Preprocess",
+                  help="leave blank to derive from max slope (maxslope/bins)"),
         ParamSpec("bandpass", "Band-pass (DoG)", "bool", False, group="Preprocess",
                   help="keep structures between the two sizes below"),
         ParamSpec("bp_small_um", "Band-pass small", "float", 2.5, 0.0, unit="µm",
@@ -214,7 +228,8 @@ register(Method(
                   choices=("percentile", "otsu"), group="Threshold"),
         ParamSpec("bright_pct", "Percentile", "int", 65, 0, 100, group="Threshold",
                   help="used when threshold = percentile"),
-        ParamSpec("min_area_px", "Min area", "int", 8, 1, unit="px", group="Shape rules"),
+        ParamSpec("min_area_px", "Min area", "int", 1, 1, unit="px", group="Shape rules",
+                  help="drop detections below this; 1 ≈ the expert's 'keep ≥0.5 px'"),
     ] + _SHAPE_RULE_SPECS,
 ))
 

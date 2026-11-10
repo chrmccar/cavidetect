@@ -182,3 +182,16 @@ Shipped methods: `colour-frangi` (default, = the calibrated current method), `sh
 (BioVoxxel inscribed-circle/thinness/elongation on a thresholded final frame), `ridge-hysteresis`
 (exposes `detect_spatial_v2`). Shape rules are entered in µm; `um_per_px` (default 2.5, a fallback —
 set to the real optical calibration) times `bin` gives µm per analysis pixel.
+
+`shape-filter` is the **faithful ImageJ flow**: its defaults reproduce the expert's macro —
+CLAHE on (`contrast=clahe`), block size 127 / 256 bins / max slope 1.5, applied per-frame
+(`clahe_scope=per-frame`, every tail frame enhanced then averaged, matching ImageJ's
+`fast_(less_accurate)` CLAHE that `skimage.exposure.equalize_adapthist` implements), and a
+near-zero size floor (`min_area_px=1` ≈ the expert's "keep anything ≥0.5 px"). The ImageJ
+"maximum slope" maps to skimage `clip_limit` via `preprocess_final.imagej_clahe_clip` =
+`maxslope/bins`. `clahe_scope=final` enhances only the averaged final frame. The per-frame
+build (`preprocess_final.final_from_stack`) is handled in `colour_shape.measure`, which
+suppresses the method's own contrast step so CLAHE runs exactly once; the raw stack used for
+onset timing and the temporal/hybrid detectors is never CLAHE'd (per-frame CLAHE is a
+non-linear renormalisation that would corrupt their absolute frame-to-frame jumps).
+`colour-frangi` is unchanged (regression-pinned byte-identical).
