@@ -2,7 +2,51 @@
 
 Pick-up note for the next session. Read this first, then `DESIGN_SPEC.md`.
 
-## 2026-11-11 — v0.7.0: INSPECTOR Phase 2 (EDITING + COMMIT→RECOMPUTE) — read this box first
+## ⭐ CURRENT STATE (2026-11-11 end) — START HERE
+
+**Where we are:** The **Inspector** feature is BUILT and SHIPPED in two parts the same day.
+It's the spatial+temporal review overlay Chris wanted (OSOV / cavicam look, Vimeo 215769356,
+stills `11nov-1/2/3.png` at project root). Repo clean, on `main` @ `094607e`, tags `v0.6.0`
+(Phase 1) + `v0.7.0` (Phase 2) pushed, **134 tests pass**. CI builds + publishes the macOS/Windows
+Releases on each tag — collaborator downloads from github.com/chrmccar/cavidetect/releases.
+
+**What the Inspector does now (both phases):**
+- A **🔍 Inspect** button in the GUI opens `<stem>_cs_inspect.html`: three synced panels (raw /
+  frame-difference / conduits-on-black) with a shared scrubber+play+zoom; conduits colour **by
+  time** (onset, blue→red) or **by tube** (distinct hue per rhizoid) with a **static** toggle.
+- An **editing toolbar** on the conduits panel: pan / add-trace (snaps to ridge, onset from
+  frames) / erase / split / merge → **⤓ Export corrections** (`<stem>_corrections.json`).
+- The GUI **✓ Apply corrections…** button runs `cavidetect inspect-apply`, recomputes onset+area
+  against the frames, and reopens a **corrected** inspector. Auto run is never overwritten;
+  rounds accumulate on the preserved baseline (`<stem>_cs_inspect_state.npz`) without drift.
+
+**STATUS = WAITING ON TESTING.** Chris (and the collaborator) will test on the Mac/real data.
+Nothing to build until that feedback lands. The ONE thing not verified here: the **live editing
+interaction in a browser** (VM Firefox was too load-heavy to drive — ReadTimeout; Phase-1's
+identical canvas DID render headless earlier). Logic is fully unit-tested + the CLI loop is
+smoke-tested end-to-end; the click/drag feel is a Mac check.
+
+**When testing results come back, likely next actions (don't pre-empt):**
+1. Fix whatever the browser testing surfaces (editing handlers / zoom / export filename path).
+2. Answer `docs/INSPECTOR_QUESTIONS_FOR_COLLABORATOR.md` — especially **tube = whole-strand vs
+   segment** (today `label_tubes` splits at junctions → a noisy strand = several hues; may want
+   whole-strand), the **difference-panel definition** (now: change between shown frames), **LUT**,
+   and **real µm/px** (still the 2.5 fallback).
+3. Possible polish: in-browser live area-curve redraw before Commit; relabel-to-class if an A/B
+   split is ever reintroduced; "difference vs dry-final" toggle.
+
+**Key files:** `cavidetect/inspector.py` (everything), wired in `colour_shape.run()`, `gui.py`
+(buttons `_open_inspector`/`_apply_corrections`, `artefact_paths["inspect"]`), `cli.py`
+(`inspect-apply`). Design: `docs/superpowers/specs/2026-11-11-inspector-design.md`. Full detail
+in the two dated boxes immediately below.
+
+**Pre-existing fragility noticed (NOT touched, unrelated to inspector):** `colour_shape.detect_spatial`
+crashes (`np.percentile` on empty) if a frame yields no tissue (`final[tissue]` empty) — only hit on
+degenerate synthetic data; real stacks are fine. Worth a guard someday.
+
+---
+
+## 2026-11-11 — v0.7.0: INSPECTOR Phase 2 (EDITING + COMMIT→RECOMPUTE)
 
 Phase 2 of the inspector (Phase 1 in the v0.6.0 box below). Full **correction loop**, additive.
 Design: `docs/superpowers/specs/2026-11-11-inspector-design.md` (Phase 2 section marked BUILT).
