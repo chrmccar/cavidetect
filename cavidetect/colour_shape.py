@@ -8,7 +8,7 @@ from __future__ import annotations
 import glob, os, time
 import numpy as np
 import tifffile
-from . import embolism as cemb, outputs as cout
+from . import embolism as cemb, outputs as cout, inspector as cinsp
 
 
 def load_frames_binned(folder: str, bin_xy: int = 2):
@@ -330,6 +330,9 @@ def run(folder: str, out_dir: str, bin_xy: int = 2, air=None, tail_frac: float =
     cout.save_embolism_viewer(stack, res, out_dir, f"{stem}_cs")
     # annotation tool: paint the correct embolised tissue on the raw final frame, export a PNG
     cout.save_annotator(stack[-1], out_dir, f"{stem}_cs")
+    # inspector: three synced panels (raw / difference / conduits) coloured by time or by
+    # tube identity — the spatial+temporal review overlay (see inspector.py)
+    cinsp.save_inspector(stack, r, out_dir, f"{stem}_cs")
 
     # §1 diagnostic montage of every pipeline stage (see where recall is lost)
     if write_diagnostics and r.get("stages"):

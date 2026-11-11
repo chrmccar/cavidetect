@@ -123,7 +123,8 @@ def artefact_paths(outdir: str, stem: str) -> dict:
     return {"viewer": os.path.join(outdir, f"{stem}_cs_viewer.html"),
             "curve": os.path.join(outdir, f"{stem}_cs_curve.csv"),
             "proof": os.path.join(outdir, f"{stem}_cs_proof.png"),
-            "annotate": os.path.join(outdir, f"{stem}_cs_annotate.html")}
+            "annotate": os.path.join(outdir, f"{stem}_cs_annotate.html"),
+            "inspect": os.path.join(outdir, f"{stem}_cs_inspect.html")}
 
 
 def build_bundle(out_dir: str, zip_path: str, extra_files=(), info_text: str = "") -> str:
@@ -274,12 +275,15 @@ def main() -> None:
             self.view_btn = ttk.Button(self.res, text="▶ Step through frames (viewer)",
                                        command=self._open_viewer, state="disabled")
             self.view_btn.grid(row=4, column=0, sticky="w", pady=6)
+            self.inspect_btn = ttk.Button(self.res, text="🔍 Inspect (where / which tube / when)",
+                                          command=self._open_inspector, state="disabled")
+            self.inspect_btn.grid(row=4, column=1, sticky="w", pady=6, padx=6)
             self.annot_btn = ttk.Button(self.res, text="✎ Annotate this dataset",
                                         command=self._open_annotator, state="disabled")
-            self.annot_btn.grid(row=4, column=1, sticky="w", pady=6, padx=6)
+            self.annot_btn.grid(row=4, column=2, sticky="w", pady=6, padx=6)
             self.folder_btn = ttk.Button(self.res, text="Open results folder",
                                          command=self._open_folder, state="disabled")
-            self.folder_btn.grid(row=4, column=2, sticky="w", pady=6)
+            self.folder_btn.grid(row=5, column=1, sticky="w", pady=6)
             self.bundle_btn = ttk.Button(self.res, text="📦 Bundle to send…",
                                          command=self._bundle, state="disabled")
             self.bundle_btn.grid(row=5, column=0, sticky="w", pady=(0, 2))
@@ -485,6 +489,7 @@ def main() -> None:
                     self.proof_label.configure(image="")
                     self.proof_hint.configure(text=f"proof PNG saved: {paths['proof']}")
             self.view_btn.configure(state="normal" if os.path.exists(paths["viewer"]) else "disabled")
+            self.inspect_btn.configure(state="normal" if os.path.exists(paths["inspect"]) else "disabled")
             self.annot_btn.configure(state="normal" if os.path.exists(paths["annotate"]) else "disabled")
             self.folder_btn.configure(state="normal")
             self.bundle_btn.configure(state="normal")
@@ -492,6 +497,11 @@ def main() -> None:
         def _open_proof(self) -> None:
             if getattr(self, "_proof_path", "") and os.path.exists(self._proof_path):
                 reveal(self._proof_path)
+
+        def _open_inspector(self) -> None:
+            i = artefact_paths(self.out_dir, self.stem)["inspect"]
+            if os.path.exists(i):
+                webbrowser.open("file://" + os.path.abspath(i))
 
         def _open_annotator(self) -> None:
             a = artefact_paths(self.out_dir, self.stem)["annotate"]

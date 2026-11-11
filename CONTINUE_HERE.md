@@ -2,6 +2,48 @@
 
 Pick-up note for the next session. Read this first, then `DESIGN_SPEC.md`.
 
+## 2026-11-11 — v0.6.0: INSPECTOR OVERLAY (Phase 1, view-only) — read this box first
+
+New **spatial + temporal review overlay** Chris asked for (the OSOV / cavicam look — Vimeo
+215769356, stills `11nov-1/2/3.png` at project root). Design:
+`docs/superpowers/specs/2026-11-11-inspector-design.md`. Fully additive; all 4 legacy
+detectors + `colour-frangi` byte-identical.
+
+**What shipped (Phase 1):** `cavidetect/inspector.py` + `<stem>_cs_inspect.html`, written by
+`colour_shape.run()` beside the viewer, opened from a new **🔍 Inspect** button in the GUI
+(`gui.py`: `artefact_paths` gained `"inspect"`, button + `_open_inspector`, enable logic).
+- Three **vertically-stacked, synced** panels (shared scrubber + ▶ play + wheel-zoom/drag-pan):
+  **raw** / **difference** (change between shown frames, 128=no change) / **conduits** on black.
+- Conduits colour toggles **by time** (onset frame, blue→red ramp) and **by tube** (each
+  rhizoid a distinct hue via `inspector.label_tubes` = skeleton→split-at-junctions→grow). A
+  **static** toggle shows the all-time map; otherwise conduits reveal at their onset frame.
+- Build reuses the memory-safe `_grey_u8` per-frame pattern for raw/diff JPEGs; the onset map
+  and tube-id map are embedded as **lossless RGBA PNGs** (value=R+256·G, alpha=valid) and
+  coloured **live in JS**, so mode/static/animation are instant and nothing is baked server-side.
+
+**Tests:** `tests/test_inspector.py` (+10) — label_tubes (line→1, crossing→split, empty→zeros,
+tiny→component fallback, 2 tubes→2 labels), PNG u16 round-trip, prepare_frames counts,
+save_inspector content + empty-mask survival. **123 pass on the VM** (was 113). **Rendered
+headless in Firefox** (geckodriver) — both colour modes + difference + controls verified working,
+no JS errors. (That browser check normally can't run on the VM; it worked this time.)
+
+**Mac follow-ups / revision inputs:** eyeball Inspect on real `data/cavi*` full-res; set real
+µm/px + frame interval. **Question list for the collaborator:**
+`docs/INSPECTOR_QUESTIONS_FOR_COLLABORATOR.md` (difference-panel definition, tube =
+strand-vs-segment, LUT, calibration, what corrections they do most) — feeds the next revision.
+
+**Phase 2 (next):** editing toolkit on the conduits canvas (add-trace→snap-to-ridge→onset from
+stack; erase; split; merge; relabel) → **Commit** exports edits JSON → `cavidetect inspect-apply`
+recomputes onset/area-curve/per-tube tables → regenerates + reopens, area curve updating live.
+Auto run preserved; corrected run saved alongside. ("view by default, commit on demand" +
+"full editing toolkit", Chris's choices 2026-11-11.)
+
+**SHIPPED: committed to main + bumped to 0.6.0 + tagged `v0.6.0` + pushed** — CI builds the
+macOS/Windows apps and publishes the Release (verify
+github.com/chrmccar/cavidetect/releases/tag/v0.6.0).
+
+---
+
 ## 2026-11-10 — EXPERT ImageJ WORKFLOW FOLDED IN (CLAHE-faithful `shape-filter`)
 
 The expert described how they actually use the tool: (1) an ImageJ macro that runs
