@@ -50,6 +50,14 @@ def main(argv=None):
     pc.add_argument("--no-tiffs", action="store_true", help="skip the per-frame/cumulative binary TIFFs")
     pc.add_argument("--no-diagnostics", action="store_true", help="skip the diagnostic stage montage")
 
+    pia = sub.add_parser("inspect-apply",
+                         help="apply inspector corrections and recompute (Phase 2)")
+    pia.add_argument("--run", required=True, help="results dir holding <stem>_inspect_state.npz")
+    pia.add_argument("--stem", required=True, help="artefact stem, e.g. cavi490001_cs")
+    pia.add_argument("--edits", required=True, help="corrections JSON exported from the inspector")
+    pia.add_argument("--source", required=True, help="the input frame folder (for added traces + panels)")
+    pia.add_argument("--bin", type=int, default=None, help="binning (default: from the saved state)")
+
     a = p.parse_args(argv)
     cfg = Config.load(getattr(a, "config", None))
     if getattr(a, "quick", False):
@@ -80,6 +88,13 @@ def main(argv=None):
                method=a.method, params=params, frame_interval_s=a.frame_interval,
                write_tiffs=not a.no_tiffs, write_diagnostics=not a.no_diagnostics)
         print(f"-> {a.out}/{os.path.basename(os.path.normpath(a.folder))}_cs_viewer.html")
+        return
+
+    if a.cmd == "inspect-apply":
+        from .inspector import apply_corrections
+        out = apply_corrections(a.run, a.stem, a.edits, a.source, bin_xy=a.bin)
+        print(f"corrected: {out['embolised_px']} px embolised, "
+              f"{out['frac_final']*100:.1f}% of tissue -> {out['inspector']}")
         return
 
     if a.cmd == "run":

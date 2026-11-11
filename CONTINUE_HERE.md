@@ -2,7 +2,48 @@
 
 Pick-up note for the next session. Read this first, then `DESIGN_SPEC.md`.
 
-## 2026-11-11 — v0.6.0: INSPECTOR OVERLAY (Phase 1, view-only) — read this box first
+## 2026-11-11 — v0.7.0: INSPECTOR Phase 2 (EDITING + COMMIT→RECOMPUTE) — read this box first
+
+Phase 2 of the inspector (Phase 1 in the v0.6.0 box below). Full **correction loop**, additive.
+Design: `docs/superpowers/specs/2026-11-11-inspector-design.md` (Phase 2 section marked BUILT).
+
+**Editing toolbar on the conduits canvas** (in `_INSPECTOR_HTML`): pan / **add** (trace a missed
+rhizoid → snaps to ridge in the drawn corridor, onset read from the frames) / **erase** (remove
+false positives) / **split** (cut a tube) / **merge** (click two tubes). Brush size, undo, clear.
+Edits are visual until **⤓ Export corrections** → downloads `<stem>_corrections.json`
+(display-coord strokes + `disp_size`/`orig_size`).
+
+**Recompute path:** GUI **✓ Apply corrections…** button (`gui.py:_apply_corrections`, runs in a
+worker thread) → `cavidetect inspect-apply --run <dir> --stem <stem>_cs --edits f.json --source
+<frames> --bin N` → `inspector.apply_corrections`: loads the preserved baseline
+`<stem>_cs_inspect_state.npz` (saved by `run()`), re-applies the FULL edit set (`apply_edits`),
+recomputes onset+area (`recompute_curve`), writes `<stem>_corrected_curve.csv`, regenerates
+`<stem>_inspect_corrected.html` with the committed edits **seeded** so further rounds accumulate
+on the baseline without drift. **Auto run never overwritten.**
+
+**New in `inspector.py`:** `save/load_inspector_state`, `rasterize_stroke`, `_split_tube`,
+`_merge_tubes`, `recompute_curve`, `edits_from_json`, `apply_edits`, `apply_corrections`;
+`save_inspector` gained `tube_ids`/`out_name`/`seed_edits`. `cli.py` `inspect-apply` subcommand.
+Coordinate model: edits exported in conduits-canvas (display) px; `edits_from_json` scales to
+analysis px via `orig_size`/`disp_size`. Split/merge resolve tubes by CLICKED COORDS on the
+post-add/erase label map (never fragile label numbers).
+
+**Tests:** `tests/test_inspector_apply.py` (+11) — stroke raster, curve recompute,
+erase/add(+onset)/split/merge, add-without-stack guard, JSON coord conversion, state round-trip,
+full `apply_corrections`. Target total ~134 pass. End-to-end CLI smoke OK (erase dropped 20.5%→
+18.8%, corrected html+curve written). Editing UI rendered headless (tools + export doc verified).
+
+**Mac follow-ups:** try the add/erase/split/merge on real `data/cavi*` in a browser, Export, then
+Apply corrections… in the GUI; confirm the corrected curve/area change makes sense; set real µm/px.
+**Still open (collaborator Qs, `docs/INSPECTOR_QUESTIONS_FOR_COLLABORATOR.md`):** tube =
+strand-vs-segment granularity, difference-panel definition, LUT, which corrections they do most.
+
+**SHIPPED: committed to main + bumped 0.6.0→0.7.0 + tagged `v0.7.0` + pushed; CI builds+publishes
+the Release** (verify github.com/chrmccar/cavidetect/releases/tag/v0.7.0).
+
+---
+
+## 2026-11-11 — v0.6.0: INSPECTOR OVERLAY (Phase 1, view-only)
 
 New **spatial + temporal review overlay** Chris asked for (the OSOV / cavicam look — Vimeo
 215769356, stills `11nov-1/2/3.png` at project root). Design:

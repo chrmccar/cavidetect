@@ -333,6 +333,11 @@ def run(folder: str, out_dir: str, bin_xy: int = 2, air=None, tail_frac: float =
     # inspector: three synced panels (raw / difference / conduits) coloured by time or by
     # tube identity — the spatial+temporal review overlay (see inspector.py)
     cinsp.save_inspector(stack, r, out_dir, f"{stem}_cs")
+    # preserved baseline for the Phase-2 correction loop (edit -> Commit -> recompute)
+    cinsp.save_inspector_state(out_dir, f"{stem}_cs", r["onset"], r["shape"], r["tissue"],
+                               r["ridge"], {"um_per_analysis_px": um_per_analysis_px,
+                                            "frame_interval_s": frame_interval_s,
+                                            "n_frames": T, "bin": bin_xy})
 
     # §1 diagnostic montage of every pipeline stage (see where recall is lost)
     if write_diagnostics and r.get("stages"):

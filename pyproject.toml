@@ -1,6 +1,6 @@
 [project]
 name = "cavidetect"
-version = "0.6.0"
+version = "0.7.0"
 description = "Automated detection of cavitation events in liverwort rhizoid time-lapses"
 requires-python = ">=3.10"
 dependencies = [

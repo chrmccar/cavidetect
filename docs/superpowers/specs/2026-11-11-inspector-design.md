@@ -66,14 +66,31 @@ empty→zeros, tiny→connected-component fallback, every True pixel labelled), 
 crash on an all-empty mask, frame count == sampled timepoints. The live canvas is a Mac-browser
 check (VM has no display), per project norm.
 
-## Phase 2 — correction loop (next revision round)
+## Phase 2 — correction loop (BUILT, v0.7.0)
 
-Full editing toolkit on the conduits canvas (add-trace → snap to ridge → onset read from the stack
-via `onset_start_of_rise`; erase; split at a junction; merge; relabel). Edits are visual until a
-**Commit** button exports an edits JSON (the `save_multiframe_annotator` stroke/orig-coords pattern)
-that a new `cavidetect inspect-apply` path consumes to recompute the onset / area-curve / per-tube
-tables, regenerate the inspector, and reopen it — with the area curve + per-tube table updating
-live as the objective feedback. The auto run is preserved; the corrected run saves alongside.
+Full editing toolkit on the conduits canvas — **pan**, **add** (trace a missed rhizoid; it snaps
+to the ridge within the drawn corridor and reads onset from the stack via `onset_start_of_rise`),
+**erase**, **split** (cut a tube), **merge** (click two tubes). Edits are visual until
+**⤓ Export corrections**, which downloads `<stem>_corrections.json` (display-coord strokes +
+`disp_size`/`orig_size`). In the GUI, **✓ Apply corrections…** runs `cavidetect inspect-apply`
+(`inspector.apply_corrections`), which re-applies the **full** edit set to the preserved auto
+baseline (`<stem>_cs_inspect_state.npz`, saved by `run()`), recomputes the onset + area curve,
+writes `<stem>_corrected_curve.csv`, and regenerates `<stem>_inspect_corrected.html` with the
+committed edits **seeded** so further rounds accumulate without drift. The auto run is never
+overwritten.
+
+**Code:** `inspector.py` gains `save_inspector_state`/`load_inspector_state`, `rasterize_stroke`,
+`_split_tube`/`_merge_tubes`, `recompute_curve`, `edits_from_json`, `apply_edits`,
+`apply_corrections`; `save_inspector` gains `tube_ids`/`out_name`/`seed_edits`. `cli.py` gains the
+`inspect-apply` subcommand; `gui.py` gains the **✓ Apply corrections…** button + `_apply_corrections`
+(runs the CLI in a worker thread, opens the corrected inspector). `colour_shape.run()` saves the
+baseline state npz. **Tests:** `tests/test_inspector_apply.py` (+11) — stroke raster, curve
+recompute, erase/add(+onset)/split/merge, add-without-stack guard, JSON coord conversion, state
+round-trip, full `apply_corrections` end to end.
+
+Deferred within Phase 2: a live area-curve redraw *inside* the browser before commit (the recompute
+is authoritative and runs on commit); relabel-to-class (A/B) — the current method of record has no
+A/B split, so "relabel" is covered by erase + split/merge for now.
 
 ## Out of scope / deferred
 - "difference vs dry final" toggle (Phase 1 ships consecutive-frame difference only; revisit on

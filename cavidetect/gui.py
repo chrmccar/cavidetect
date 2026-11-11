@@ -287,6 +287,9 @@ def main() -> None:
             self.bundle_btn = ttk.Button(self.res, text="📦 Bundle to send…",
                                          command=self._bundle, state="disabled")
             self.bundle_btn.grid(row=5, column=0, sticky="w", pady=(0, 2))
+            self.apply_btn = ttk.Button(self.res, text="✓ Apply corrections…",
+                                        command=self._apply_corrections, state="disabled")
+            self.apply_btn.grid(row=5, column=2, sticky="w", pady=(0, 2))
 
         # -- method + schema-driven settings --
         def _on_method_change(self) -> None:
@@ -490,6 +493,8 @@ def main() -> None:
                     self.proof_hint.configure(text=f"proof PNG saved: {paths['proof']}")
             self.view_btn.configure(state="normal" if os.path.exists(paths["viewer"]) else "disabled")
             self.inspect_btn.configure(state="normal" if os.path.exists(paths["inspect"]) else "disabled")
+            _state = os.path.join(self.out_dir, f"{self.stem}_cs_inspect_state.npz")
+            self.apply_btn.configure(state="normal" if os.path.exists(_state) else "disabled")
             self.annot_btn.configure(state="normal" if os.path.exists(paths["annotate"]) else "disabled")
             self.folder_btn.configure(state="normal")
             self.bundle_btn.configure(state="normal")
@@ -502,6 +507,51 @@ def main() -> None:
             i = artefact_paths(self.out_dir, self.stem)["inspect"]
             if os.path.exists(i):
                 webbrowser.open("file://" + os.path.abspath(i))
+
+        def _apply_corrections(self) -> None:
+            """Run the Phase-2 recompute: pick the corrections JSON exported from the
+            inspector, re-apply it to the preserved baseline, and open the corrected view."""
+            rp = getattr(self, "_run_params", None)
+            state = os.path.join(self.out_dir, f"{self.stem}_cs_inspect_state.npz")
+            if not rp or not os.path.exists(state):
+                self._append("! Run a dataset and open Inspect first.\n")
+                return
+            downloads = os.path.expanduser("~/Downloads")
+            edits = filedialog.askopenfilename(
+                title="Choose the corrections JSON exported from the inspector",
+                initialdir=downloads if os.path.isdir(downloads) else os.path.expanduser("~"),
+                filetypes=[("Corrections JSON", "*.json"), ("All files", "*")])
+            if not edits:
+                return
+            exe = sys.executable
+            frozen = bool(getattr(sys, "frozen", False))
+            head = [exe] if frozen else [exe, "-m", "cavidetect.cli"]
+            cmd = head + ["inspect-apply", "--run", self.out_dir,
+                          "--stem", f"{self.stem}_cs", "--edits", edits,
+                          "--source", rp["input"], "--bin", str(rp["bin"])]
+            self._append("$ " + " ".join(cmd) + "\n\n")
+            self.apply_btn.configure(state="disabled")
+
+            def worker():
+                cwd = None if frozen else repo_root()
+                proc = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE,
+                                        stderr=subprocess.STDOUT, text=True, bufsize=1,
+                                        encoding="utf-8", errors="replace")
+                for line in proc.stdout:
+                    self.root.after(0, self._append, line)
+                proc.wait()
+                corrected = os.path.join(self.out_dir, f"{self.stem}_cs_inspect_corrected.html")
+
+                def done():
+                    self.apply_btn.configure(state="normal")
+                    if proc.returncode == 0 and os.path.exists(corrected):
+                        self._append("\n✓ corrections applied — opening corrected inspector\n")
+                        webbrowser.open("file://" + os.path.abspath(corrected))
+                    else:
+                        self._append("\n! inspect-apply failed (see log above)\n")
+                self.root.after(0, done)
+
+            threading.Thread(target=worker, daemon=True).start()
 
         def _open_annotator(self) -> None:
             a = artefact_paths(self.out_dir, self.stem)["annotate"]
