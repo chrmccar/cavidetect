@@ -11,11 +11,13 @@ import tifffile
 from . import embolism as cemb, outputs as cout, inspector as cinsp
 
 
-def load_frames_binned(folder: str, bin_xy: int = 2):
+def load_frames_binned(folder: str, bin_xy: int = 2, max_frames: int | None = None):
     files = sorted(f for f in glob.glob(os.path.join(folder, "*.tif")) +
                    glob.glob(os.path.join(folder, "*.tiff")) if " - Copy" not in f)
     if not files:
         raise ValueError(f"no .tif frames in {folder}")
+    if max_frames is not None:                   # only read the window we analyse (bounds RAM)
+        files = files[: int(max_frames)]
 
     def _g(f):
         a = tifffile.imread(f)
@@ -263,7 +265,7 @@ def measure(stack, method: str = "colour-frangi", params: dict | None = None,
                 ridge=ridge, onset=onset, cum=cum, frac=frac, tissue_px=int(tissue.sum()),
                 method=method, params=resolved, stages=d.get("stages"),
                 confidence=d.get("confidence"), transition=d.get("transition"),
-                evidence=d.get("evidence"))
+                evidence=d.get("evidence"), tubes=d.get("tubes"), events=d.get("events"))
 
 
 def run(folder: str, out_dir: str, bin_xy: int = 2, air=None, tail_frac: float = 0.12,
@@ -279,7 +281,13 @@ def run(folder: str, out_dir: str, bin_xy: int = 2, air=None, tail_frac: float =
     from . import diagnostics as cdiag
     os.makedirs(out_dir, exist_ok=True)
     stem = os.path.basename(os.path.normpath(folder))
-    stack = load_frames_binned(folder, bin_xy)
+    # rhizoid-events analyses only the first max_frames (cavitation is early); cap the
+    # load so a 400-frame full-res stack never allocates beyond the window.
+    _cap = None
+    if method == "rhizoid-events":
+        from . import methods as _M
+        _cap = int(_M.resolve_params(method, dict(params or {})).get("max_frames", 100))
+    stack = load_frames_binned(folder, bin_xy, max_frames=_cap)
     params = dict(params or {})
     if air is not None:                      # back-compat: --air folds into the method params
         params.setdefault("air", air)
@@ -332,12 +340,14 @@ def run(folder: str, out_dir: str, bin_xy: int = 2, air=None, tail_frac: float =
     cout.save_annotator(stack[-1], out_dir, f"{stem}_cs")
     # inspector: three synced panels (raw / difference / conduits) coloured by time or by
     # tube identity — the spatial+temporal review overlay (see inspector.py)
-    cinsp.save_inspector(stack, r, out_dir, f"{stem}_cs")
+    cinsp.save_inspector(stack, r, out_dir, f"{stem}_cs", tube_ids=r.get("tubes"))
     # preserved baseline for the Phase-2 correction loop (edit -> Commit -> recompute)
     cinsp.save_inspector_state(out_dir, f"{stem}_cs", r["onset"], r["shape"], r["tissue"],
                                r["ridge"], {"um_per_analysis_px": um_per_analysis_px,
                                             "frame_interval_s": frame_interval_s,
-                                            "n_frames": T, "bin": bin_xy})
+                                            "n_frames": T, "bin": bin_xy,
+                                            "method": method, "params": r["params"]},
+                               tubes=r.get("tubes"))
 
     # §1 diagnostic montage of every pipeline stage (see where recall is lost)
     if write_diagnostics and r.get("stages"):
@@ -355,6 +365,17 @@ def run(folder: str, out_dir: str, bin_xy: int = 2, air=None, tail_frac: float =
     # hybrid brief: export the fused evidence maps (ridge / temporal / combined / artifact)
     if r.get("evidence"):
         cout.save_evidence_maps(r["final"], r["evidence"], out_dir, f"{stem}_cs")
+    # rhizoid-events: per-rhizoid tracing map + cavitation highlight series + timing/count
+    if r.get("events") is not None:
+        n_cav = cout.write_rhizoid_count(r["events"], T, out_dir, f"{stem}_cs")
+        cout.write_rhizoid_table(r["events"], out_dir, f"{stem}_cs",
+                                 frame_interval_s=frame_interval_s, scale_um2=scale_um2)
+        cout.save_rhizoid_map(r["tubes"], r["final"], out_dir, f"{stem}_cs")
+        cout.save_cavitation_series(stack, r["tubes"], r["events"], out_dir, f"{stem}_cs",
+                                    max_frames=r["params"].get("max_frames"))
+        print("rhizoids: traced=%d  cavitated=%d  (drying=%d)"
+              % (int(np.asarray(r["tubes"]).max()), n_cav,
+                 sum(1 for e in r["events"] if e["cls"] == "drying")), flush=True)
     # §7/§1 per-frame + cumulative binary TIFF of newly-detected pixels (streamed, sparse-compressed)
     if write_tiffs:
         cout.save_event_tiffs(r["onset"], r["shape"], T, out_dir, f"{stem}_cs")

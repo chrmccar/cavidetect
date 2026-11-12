@@ -2,7 +2,50 @@
 
 Pick-up note for the next session. Read this first, then `DESIGN_SPEC.md`.
 
-## ⭐ CURRENT STATE (2026-11-11 end) — START HERE
+## ⭐ CURRENT STATE (2026-11-12) — START HERE
+
+**Shipped `v0.8.0`: new selectable method `rhizoid-events` (per-rhizoid cavitation).**
+Built from the expert's 2026-11-12 feedback (`../12_11_feedback.docx`): work per individual
+pegged rhizoid, not total area. Design: `docs/superpowers/specs/2026-11-12-rhizoid-events-design.md`.
+Fully additive — the other 5 detectors + Inspector stay byte-identical (regression-pinned).
+**146 tests pass** (was 134; +12 in `tests/test_rhizoid_events.py`).
+
+**What it does** (`cavidetect/rhizoid_events.py`, registered in `methods.py`, `needs_stack`):
+- Loads only the first `max_frames` (default 100 — cavitation is early; this is the RAM fix).
+- Traces individual rhizoids on a late-tail reference: CLAHE the single reference frame
+  (honours "CLAHE first" for faint-strand visibility) → smooth → Frangi ridge → close gaps →
+  drop short fragments → `label_tubes` (split at junctions) → `_merge_collinear` (rejoin
+  over-split straight fragments; keep diverging branches separate).
+- Reads each strand's history **from the raw stack** (never CLAHE — per-frame CLAHE destroys
+  temporal DN). Two signals: `bright_frac` (whole-strand coverage) + normalised mean (rate).
+- **cavitation** = whole strand lights (coverage ≥ `bright_frac_thresh`=0.7) AND fast (mean
+  rises 0.2→0.8 within `step_window`=2 frames). **drying** = partial OR gradual. **none** =
+  no absolute-contrast signal. One physical tube that over-segments is fused by
+  `merge_coincident_cavitations` (touching + same onset) so the COUNT is honest.
+- Outputs: `<stem>_cs_rhizoids.png` (traced map, one hue per strand), `<stem>_cs_cavitation/`
+  PNG-per-frame + `<stem>_cs_cavitation.gif` (each strand lit at its event frame),
+  `<stem>_cs_rhizoids.csv` (id/class/frame/time/size/confidence), `<stem>_cs_rhizoid_count.csv`
+  (cumulative count staircase). The Inspector opens coloured BY TUBE for review.
+- **Correction loop** (reuses Inspector): the traced `tubes` map is persisted in
+  `_inspect_state.npz`; split/merge/erase/add edit strand IDENTITY and **✓ Apply corrections…**
+  recomputes the per-rhizoid count+table (`_corrected_rhizoid_*.csv`) — not just area. No
+  coincident-merge on recompute (would undo a manual split).
+
+**Run it (Mac):** `cavidetect colour-shape ../data/cavi490001 --out results_whole/re --bin 1
+--method rhizoid-events` — or pick "Per-rhizoid events" in the GUI dropdown.
+
+**STATUS = SHIPPED, awaiting expert test on real data.** VM checks done: 146 unit tests +
+end-to-end `run()` smoke on synthetic stacks (count correct, all artefacts written). NOT done
+on VM (needs Mac/real data/browser): eyeball the traced map + cavitation GIF + by-tube inspector
+on real `data/cavi*` full-res; tune `ridge_thr`/`min_strand_px`/`bright_frac_thresh` on the dense
+bundles; set real µm/px. **Known caveat (carried from the area method):** per-rhizoid COUNT
+depends on tracing granularity — over-/under-segmentation of dense bundles is what the Inspector
+split/merge is for. Likely next after feedback: tune tracing on real bundles; maybe a Cellpose
+instance backend behind the same interface (left out by design).
+
+---
+
+## ⭐ CURRENT STATE (2026-11-11 end)
 
 **Where we are:** The **Inspector** feature is BUILT and SHIPPED in two parts the same day.
 It's the spatial+temporal review overlay Chris wanted (OSOV / cavicam look, Vimeo 215769356,

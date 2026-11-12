@@ -385,3 +385,50 @@ register(Method(
         ParamSpec("border_px", "Border distance", "int", 10, 0, unit="px", group="Ridge"),
     ],
 ))
+
+
+# --------------------------------------------------------------------------- #
+# Method 7: rhizoid-events (per-rhizoid cavitation; count + timing)
+# --------------------------------------------------------------------------- #
+
+def _detect_rhizoid_events(final, tissue, stack=None, **p):
+    from .rhizoid_events import detect
+    if stack is None:
+        raise ValueError("rhizoid-events needs the frame stack")
+    return detect(final, tissue, stack=stack, **p)
+
+
+register(Method(
+    "rhizoid-events",
+    "Per-rhizoid events (count + timing)",
+    _detect_rhizoid_events,
+    needs_stack=True,
+    schema=[
+        ParamSpec("um_per_px", "Pixel size", "float", 2.5, 0.001, unit="µm/px", group="General"),
+        ParamSpec("max_frames", "Max frames analysed", "int", 100, 1, unit="frames", group="General",
+                  help="cavitation is in the first ~70 frames; bounds RAM"),
+        ParamSpec("ref_tail_n", "Reference tail", "int", 8, 1, unit="frames", group="General",
+                  help="frames max-projected for the late reference where strands are brightest"),
+        ParamSpec("bright_frac_thresh", "Whole-strand fraction", "float", 0.7, 0.0, 1.0, group="Event",
+                  help="strand fraction that must brighten for a cavitation (vs partial drying)"),
+        ParamSpec("step_window", "Max jump window", "int", 2, 1, 10, unit="frames", group="Event",
+                  help="cavitation completes within this many frames"),
+        ParamSpec("gradual_reject", "Min jump step", "float", 0.3, 0.0, 1.0, group="Event",
+                  help="min single-frame rise in bright-fraction; slower ⇒ drying"),
+        ParamSpec("corridor_dilate_px", "Sampling corridor", "int", 3, 0, unit="px", group="Trace",
+                  help="dilate each strand before sampling brightness (absorbs drift)"),
+        ParamSpec("ridge_thr", "Ridge threshold", "float", 0.04, 0.0, 1.0, group="Trace",
+                  help="tubeness needed to trace a rhizoid; lower = fainter strands kept"),
+        ParamSpec("min_strand_px", "Min strand size", "int", 20, 1, unit="px", group="Trace",
+                  help="drop traced fragments smaller than a rhizoid"),
+        ParamSpec("clahe_reference", "CLAHE the reference", "bool", True, group="Trace",
+                  help="enhance faint rhizoids in the trace reference (timing stays on raw DN)"),
+        ParamSpec("divergence_merge", "Merge collinear fragments", "bool", True, group="Trace",
+                  help="rejoin over-split straight fragments; keep diverging branches separate"),
+        ParamSpec("min_contrast", "Min pixel contrast", "float", 15.0, 0.0, unit="DN", group="Trace",
+                  help="ignore strand pixels whose dark→bright span is below this"),
+        ParamSpec("clahe_blocksize", "CLAHE block", "int", 127, 1, unit="px", group="Preprocess"),
+        ParamSpec("clahe_bins", "CLAHE bins", "int", 256, 2, group="Preprocess"),
+        ParamSpec("clahe_maxslope", "CLAHE max slope", "float", 1.5, 1.0, group="Preprocess"),
+    ],
+))

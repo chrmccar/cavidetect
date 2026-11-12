@@ -786,3 +786,114 @@ def write_manifest(out_dir: str, stem: str, manifest: dict) -> str:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2, default=str)
     return path
+
+
+# =========================================================================== #
+# rhizoid-events outputs (per-rhizoid tracing, count + timing). Written by
+# colour_shape.run() when the method returns an ``events`` payload.
+# =========================================================================== #
+
+def _distinct_hues(ids):
+    """Golden-ratio-spaced HSV hues so adjacent rhizoids get well-separated colours."""
+    from matplotlib.colors import hsv_to_rgb
+    out = {}
+    for i, tid in enumerate(ids):
+        h = ((i + 1) * 0.61803398875) % 1.0
+        out[tid] = hsv_to_rgb([h, 0.82, 0.98])
+    return out
+
+
+def save_rhizoid_map(tubes, final, out_dir: str, stem: str, dpi: int = 120) -> str:
+    """Single image of every traced rhizoid, each a distinct hue over the dimmed
+    final frame (the expert's 'single image that shows the traced rhizoids')."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    tubes = np.asarray(tubes, np.int32)
+    ids = [int(v) for v in np.unique(tubes) if v != 0]
+    hue = _distinct_hues(ids)
+    f = np.asarray(final, np.float32)
+    vmin, vmax = np.percentile(f, [2, 99])
+    g = np.clip((f - vmin) / (vmax - vmin + 1e-9), 0, 1)
+    rgb = np.stack([g] * 3, -1) * 0.5
+    for tid in ids:
+        rgb[tubes == tid] = hue[tid]
+    fig, ax = plt.subplots(figsize=(7, 6))
+    ax.imshow(rgb); ax.axis("off")
+    ax.set_title(f"{stem} — {len(ids)} traced rhizoids")
+    path = os.path.join(out_dir, f"{stem}_rhizoids.png")
+    plt.tight_layout(); plt.savefig(path, dpi=dpi); plt.close()
+    return path
+
+
+def save_cavitation_series(stack, tubes, events, out_dir: str, stem: str,
+                           make_gif: bool = True, max_frames: int | None = None) -> str:
+    """Frame-by-frame series highlighting each rhizoid as it cavitates.
+
+    Writes one PNG per frame to ``<stem>_cavitation/`` and an animated GIF. A
+    cavitating strand lights at its event frame and stays lit (the spreading
+    staircase the expert reads). Memory-safe: one frame rendered at a time.
+    """
+    from PIL import Image
+    tubes = np.asarray(tubes, np.int32)
+    stack = np.asarray(stack, np.float32)
+    T = stack.shape[0] if max_frames is None else min(int(max_frames), stack.shape[0])
+    cav = {e["id"]: e["cavitation_frame"] for e in events
+           if e["cls"] == "cavitation" and e["cavitation_frame"] is not None}
+    ids = sorted(cav)
+    hue = _distinct_hues(ids)
+    masks = {tid: (tubes == tid) for tid in ids}
+    step = max(1, T // 8)
+    vmin, vmax = np.percentile(stack[::step], [2, 99])
+    sub = os.path.join(out_dir, f"{stem}_cavitation")
+    os.makedirs(sub, exist_ok=True)
+    frames = []
+    for t in range(T):
+        g = np.clip((stack[t] - vmin) / (vmax - vmin + 1e-9), 0, 1)
+        rgb = np.stack([g] * 3, -1)
+        for tid in ids:
+            if cav[tid] <= t:
+                m = masks[tid]
+                rgb[m] = 0.3 * rgb[m] + 0.7 * np.asarray(hue[tid])
+        img = Image.fromarray((np.clip(rgb, 0, 1) * 255).astype(np.uint8))
+        img.save(os.path.join(sub, f"{stem}_cav_{t:03d}.png"))
+        if make_gif:
+            frames.append(img.convert("P", palette=Image.ADAPTIVE, colors=64))
+    if make_gif and frames:
+        frames[0].save(os.path.join(out_dir, f"{stem}_cavitation.gif"), save_all=True,
+                       append_images=frames[1:], duration=120, loop=0)
+    return sub
+
+
+def write_rhizoid_table(events, out_dir: str, stem: str, frame_interval_s: float = 15.0,
+                        scale_um2: float | None = None) -> str:
+    """Per-rhizoid timing table: id, class, cavitation frame/time, size, confidence."""
+    rows = []
+    for e in sorted(events, key=lambda z: z["id"]):
+        f = e["cavitation_frame"]
+        row = {"id": e["id"], "class": e["cls"], "cavitation_frame": f,
+               "cavitation_time_s": (None if f is None else round(f * frame_interval_s, 2)),
+               "length_px": e["length_px"], "bright_frac_peak": e["bright_frac_peak"],
+               "confidence": e["confidence"]}
+        if scale_um2:
+            row["length_um2"] = round(e["length_px"] * scale_um2, 2)
+        rows.append(row)
+    path = os.path.join(out_dir, f"{stem}_rhizoids.csv")
+    pd.DataFrame(rows).to_csv(path, index=False)
+    return path
+
+
+def write_rhizoid_count(events, n_frames: int, out_dir: str, stem: str) -> int:
+    """Cumulative count of rhizoids cavitated vs frame (the staircase CSV).
+    Returns the final total count."""
+    T = int(n_frames)
+    counts = np.zeros(T, np.int64)
+    for e in events:
+        if e["cls"] == "cavitation" and e["cavitation_frame"] is not None:
+            f = int(e["cavitation_frame"])
+            if 0 <= f < T:
+                counts[f] += 1
+    cum = np.cumsum(counts)
+    pd.DataFrame({"frame": np.arange(T), "n_cavitated_cumulative": cum}).to_csv(
+        os.path.join(out_dir, f"{stem}_rhizoid_count.csv"), index=False)
+    return int(cum[-1]) if T else 0

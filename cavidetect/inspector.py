@@ -224,26 +224,33 @@ def save_inspector(stack, result: dict, out_dir: str, stem: str,
 # and recomputes the measurement, so iterating "until satisfactory" never drifts.
 
 def save_inspector_state(out_dir: str, stem: str, onset, shape, tissue, ridge,
-                         meta: dict) -> str:
+                         meta: dict, tubes=None) -> str:
     """Persist the auto run's committed arrays so a correction can recompute without
-    re-running detection. Small: onset int16, shape/tissue bool, ridge float16."""
+    re-running detection. Small: onset int16, shape/tissue bool, ridge float16.
+    ``tubes`` (the traced per-rhizoid identity map) is stored when supplied so the
+    rhizoid-events correction loop edits identities on the real traced map."""
     import numpy as _np
     path = os.path.join(out_dir, f"{stem}_inspect_state.npz")
-    _np.savez_compressed(
-        path,
+    arrs = dict(
         onset=_np.asarray(onset).astype(_np.int16),
         shape=_np.asarray(shape, dtype=bool),
         tissue=_np.asarray(tissue, dtype=bool),
         ridge=_np.asarray(ridge, dtype=_np.float16),
         meta=_json.dumps(meta))
+    if tubes is not None:
+        arrs["tubes"] = _np.asarray(tubes, dtype=_np.int32)
+    _np.savez_compressed(path, **arrs)
     return path
 
 
 def load_inspector_state(path: str) -> dict:
     d = np.load(path, allow_pickle=False)
-    return dict(onset=d["onset"].astype(np.int32), shape=d["shape"].astype(bool),
-                tissue=d["tissue"].astype(bool), ridge=d["ridge"].astype(np.float32),
-                meta=_json.loads(str(d["meta"])))
+    out = dict(onset=d["onset"].astype(np.int32), shape=d["shape"].astype(bool),
+               tissue=d["tissue"].astype(bool), ridge=d["ridge"].astype(np.float32),
+               meta=_json.loads(str(d["meta"])))
+    if "tubes" in d.files:
+        out["tubes"] = d["tubes"].astype(np.int32)
+    return out
 
 
 def rasterize_stroke(points, radius, hw) -> np.ndarray:
@@ -346,24 +353,31 @@ def edits_from_json(doc: dict) -> list:
 
 
 def apply_edits(onset, shape, tissue, ridge, edits, stack=None,
-                grow_ridge: float = 0.02, rise_frac: float = 0.4) -> dict:
+                grow_ridge: float = 0.02, rise_frac: float = 0.4, base_tubes=None) -> dict:
     """Apply analysis-space edits to the committed arrays. Returns onset', shape', tube_ids'.
 
     erase removes pixels (false positives); add inserts a traced rhizoid, snapped to the
     ridge within the drawn corridor, with onset read from ``stack``; split/merge are
     identity-only (resolved by the clicked coordinates on the post-erase/add label map, so
-    they never depend on fragile label numbers)."""
+    they never depend on fragile label numbers).
+
+    ``base_tubes`` (rhizoid-events): the persisted traced identity map. When given, identity
+    edits apply to it — erases clear those strands, adds get a fresh id — instead of
+    re-deriving identity from the embolised mask, so the per-rhizoid count stays faithful."""
     onset = np.asarray(onset).astype(np.int32).copy()
     shape = np.asarray(shape, bool).copy()
     tissue = np.asarray(tissue, bool)
     ridge = np.asarray(ridge, np.float32)
     hw = shape.shape
+    tube = np.asarray(base_tubes, np.int32).copy() if base_tubes is not None else None
     add_masks = []
     for e in edits:
         if e["op"] == "erase":
             m = rasterize_stroke(e["points"], e["radius"], hw)
             shape[m] = False
             onset[m] = -1
+            if tube is not None:
+                tube[m] = 0
         elif e["op"] == "add":
             m = rasterize_stroke(e["points"], e["radius"], hw) & tissue
             snap = m & (ridge >= grow_ridge)
@@ -380,7 +394,10 @@ def apply_edits(onset, shape, tissue, ridge, edits, stack=None,
             o = onset_start_of_rise(stack, new, rise_frac=rise_frac)
             shape[new] = True
             onset[new] = o[new]
-    tube = label_tubes(shape)
+            if tube is not None:
+                tube[new] = int(tube.max()) + 1    # the added strand is a new identity
+    if tube is None:
+        tube = label_tubes(shape)
     for e in edits:
         if e["op"] == "split":
             tube = _split_tube(tube, e["point"])
@@ -404,7 +421,7 @@ def apply_corrections(run_dir: str, stem: str, edits_path: str, source: str,
     needs_stack = any(e["op"] == "add" for e in edits)
     stack = load_frames_binned(source, bin_xy) if needs_stack else None
     res = apply_edits(state["onset"], state["shape"], state["tissue"], state["ridge"],
-                      edits, stack=stack)
+                      edits, stack=stack, base_tubes=state.get("tubes"))
     T = int(meta.get("n_frames", int(np.asarray(state["onset"]).max()) + 1))
     tissue_px = int(state["tissue"].sum())
     cum, frac = recompute_curve(res["onset"], res["shape"], tissue_px, T)
@@ -416,13 +433,28 @@ def apply_corrections(run_dir: str, stem: str, edits_path: str, source: str,
     # the corrected inspector needs the stack for the raw/difference panels
     if stack is None:
         stack = load_frames_binned(source, bin_xy)
+    out = dict()
+    # rhizoid-events: recompute the per-rhizoid COUNT + timing table from the edited tube
+    # map (not just area). No coincident-merge here — it would undo the user's manual splits.
+    if meta.get("method") == "rhizoid-events":
+        from . import rhizoid_events as _re, outputs as _cout
+        params = meta.get("params", {})
+        mf = int(params.get("max_frames", 100))
+        events, _, _ = _re.recompute_events(res["tube_ids"], stack[:mf], params)
+        _cout.write_rhizoid_count(events, T, run_dir, f"{stem}_corrected")
+        _cout.write_rhizoid_table(events, run_dir, f"{stem}_corrected",
+                                  frame_interval_s=float(meta.get("frame_interval_s", 15.0)),
+                                  scale_um2=um2)
+        out["n_cavitated"] = sum(1 for e in events if e["cls"] == "cavitation")
+        out["rhizoid_table"] = os.path.join(run_dir, f"{stem}_corrected_rhizoids.csv")
     path = save_inspector(stack, {"onset": res["onset"], "shape": res["shape"]},
                           run_dir, stem, tube_ids=res["tube_ids"],
                           out_name=f"{stem}_inspect_corrected.html",
                           seed_edits=doc)
-    return dict(inspector=path, frac_final=float(frac[-1]),
-                embolised_px=int(res["shape"].sum()),
-                curve=os.path.join(run_dir, f"{stem}_corrected_curve.csv"))
+    out.update(inspector=path, frac_final=float(frac[-1]),
+               embolised_px=int(res["shape"].sum()),
+               curve=os.path.join(run_dir, f"{stem}_corrected_curve.csv"))
+    return out
 
 
 def load_frames_binned(folder: str, bin_xy: int = 1):
